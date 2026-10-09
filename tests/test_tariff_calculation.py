@@ -1,0 +1,249 @@
+"""Tests für die Berechnung von Verbrauch und Kosten je Abschnitt aus Volumen und Preisen.
+
+Grundlage ist eine erfundene Gasrechnung 01.06.2024–31.05.2025, aufgebaut wie
+die Rechnungen der Versorger: vier Ablesezeiträume mit Abrechnungsvolumen,
+Zustandszahl und Brennwert, ein Arbeitspreis, ein Grundpreis je Jahr und 19 %
+Umsatzsteuer. Die Rechnung weist 39135 kWh und 3.056,85 € brutto aus - aber
+weder Verbrauch noch Kosten für das Kalenderjahr 2025 allein.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+from decimal import Decimal
+
+from PyQt6.QtWidgets import QApplication
+
+from app_context import AppContext
+from models.cost import Cost, InvoiceSplit
+from models.enums import AllocationKey
+from models.property import Property
+from models.tariff import SplitCalculation, fit_amounts, year_fraction
+from models.value_objects import DateRange, Money
+from ui.dialogs.splits_dialog import (
+    _COL_BASE_PRICE,
+    _COL_CALORIFIC,
+    _COL_CONDITION,
+    _COL_CONSUMPTION,
+    _COL_VOLUME,
+    _COL_WORKING_PRICE,
+    SplitsDialog,
+)
+
+WORKING_PRICE = Decimal("0.0612")
+BASE_PRICE = Decimal("174.00")
+VAT = Decimal(19)
+INVOICE_PERIOD = DateRange(date(2024, 6, 1), date(2025, 5, 31))
+INVOICE_AMOUNT = Money.from_decimal("3056.85")
+
+#: (von, bis, Abrechnungsvolumen m³, Zustandszahl, Brennwert, erwartete kWh, erwarteter Bruttobetrag)
+ROWS = [
+    (date(2024, 6, 1), date(2024, 6, 30), "132", "0.9581", "11.420", "1444", "122.13"),
+    (date(2024, 7, 1), date(2024, 9, 30), "301", "0.9581", "11.420", "3293", "291.87"),
+    (date(2024, 10, 1), date(2024, 12, 31), "1187", "0.9581", "11.420", "12988", "997.94"),
+    (date(2025, 1, 1), date(2025, 5, 31), "1954", "0.9581", "11.436", "21410", "1644.91"),
+]
+
+
+def _calculation(volume: str, condition: str, calorific: str) -> SplitCalculation:
+    return SplitCalculation(Decimal(volume), Decimal(condition), Decimal(calorific), WORKING_PRICE, BASE_PRICE, VAT)
+
+
+def _splits() -> list[InvoiceSplit]:
+    return [
+        InvoiceSplit(DateRange(start, end), Money.from_decimal(amount), Decimal(kwh), _calculation(volume, z, h))
+        for start, end, volume, z, h, kwh, amount in ROWS
+    ]
+
+
+class TestCalculation:
+    def test_energy_from_volume_matches_the_invoice(self) -> None:
+        energies = [_calculation(volume, z, h).energy() for _s, _e, volume, z, h, _k, _a in ROWS]
+
+        assert energies == [Decimal(kwh) for *_rest, kwh, _amount in ROWS]
+        assert sum(energies, Decimal(0)) == Decimal("39135")  # type: ignore[arg-type]
+
+    def test_base_price_is_charged_per_day_of_each_calendar_year(self) -> None:
+        # 2024 ist ein Schaltjahr: 214 von 366 Tagen; 2025: 151 von 365 Tagen.
+        part_2024 = BASE_PRICE * year_fraction(DateRange(date(2024, 6, 1), date(2024, 12, 31)))
+        part_2025 = BASE_PRICE * year_fraction(DateRange(date(2025, 1, 1), date(2025, 5, 31)))
+
+        assert round(part_2024, 2) == Decimal("101.74")
+        assert round(part_2025, 2) == Decimal("71.98")
+        assert year_fraction(DateRange.for_year(2024)) == year_fraction(DateRange.for_year(2025)) == 1
+        assert year_fraction(INVOICE_PERIOD) == Decimal(214) / 366 + Decimal(151) / 365
+
+    def test_costs_per_split_add_up_to_the_invoice(self) -> None:
+        exact = [
+            _calculation(volume, z, h).gross_cost(DateRange(start, end), Decimal(kwh))
+            for start, end, volume, z, h, kwh, _amount in ROWS
+        ]
+
+        amounts = fit_amounts([e for e in exact if e is not None], INVOICE_AMOUNT)
+
+        assert amounts == [Money.from_decimal(amount) for *_rest, amount in ROWS]
+        assert sum(amounts, Money.zero()) == INVOICE_AMOUNT
+
+    def test_small_rounding_difference_is_spread_over_the_splits(self) -> None:
+        exact = [Decimal("100.004"), Decimal("200.004"), Decimal("300.004")]  # zusammen 600,012
+
+        # Der Versorger hat anders gerundet und weist 600,03 aus.
+        fitted = fit_amounts(exact, Money.from_decimal("600.03"))
+
+        assert sum(fitted, Money.zero()) == Money.from_decimal("600.03")
+        assert all(abs(f.cents - round(e * 100)) <= 1 for f, e in zip(fitted, exact))
+
+    def test_large_difference_is_not_hidden(self) -> None:
+        exact = [Decimal("100.00"), Decimal("200.00")]
+
+        # 50 € Abweichung ist keine Rundung: Die Beträge bleiben, wie berechnet.
+        assert fit_amounts(exact, Money.from_decimal("350.00")) == [Money(10000), Money(20000)]
+        assert fit_amounts(exact, None) == [Money(10000), Money(20000)]
+
+    def test_incomplete_inputs_calculate_nothing(self) -> None:
+        only_volume = SplitCalculation(volume=Decimal("100"))
+        assert only_volume.energy() is None and not only_volume.has_volume
+        assert only_volume.gross_cost(INVOICE_PERIOD, Decimal("10")) is None
+        assert SplitCalculation().is_empty and not only_volume.is_empty
+
+    def test_base_price_only_and_working_price_only(self) -> None:
+        year = DateRange.for_year(2025)
+        base_only = SplitCalculation(base_price=Decimal("120"), vat_percent=Decimal(7))
+        working_only = SplitCalculation(working_price=Decimal("2.50"))
+
+        assert base_only.gross_cost(year, None) == Decimal("128.40")
+        assert working_only.gross_cost(year, Decimal("100")) == Decimal("250.00")
+
+
+class TestInBilling:
+    def _invoice(self, context: AppContext) -> Cost:
+        house = context.properties.save_property(Property(name="Gashaus", address="Am Brenner 1, 12345 Heizstadt"))
+        assert house.id is not None
+        return context.costs.save_cost(
+            Cost(
+                house.id,
+                context.cost_types.get_by_name("Brennstoffkosten (Gas/Öl)"),
+                INVOICE_AMOUNT,
+                INVOICE_PERIOD,
+                AllocationKey.CONSUMPTION_AREA,
+                description="Gasversorger",
+                consumption=Decimal("39135"),
+                consumption_unit="kWh",
+                splits=_splits(),
+            )
+        )
+
+    def test_calendar_year_2025_gets_exactly_the_last_split(self, context: AppContext) -> None:
+        invoice = self._invoice(context)
+
+        part_2025 = invoice.prorate(DateRange.for_year(2025))
+        part_2024 = invoice.prorate(DateRange.for_year(2024))
+
+        assert part_2025 is not None and part_2024 is not None
+        assert (part_2025.amount, part_2025.consumption) == (Money.from_decimal("1644.91"), Decimal("21410"))
+        assert (part_2024.amount, part_2024.consumption) == (Money.from_decimal("1411.94"), Decimal("17725"))
+        assert part_2024.amount + part_2025.amount == INVOICE_AMOUNT
+
+    def test_calculation_inputs_survive_saving(self, context: AppContext) -> None:
+        invoice = self._invoice(context)
+
+        (stored,) = context.costs.list_costs(invoice.property_id)
+
+        assert stored.splits == _splits()
+        last = stored.splits[-1].calculation
+        assert last is not None
+        assert (last.volume, last.calorific_value, last.working_price) == (
+            Decimal("1954"), Decimal("11.436"), WORKING_PRICE,
+        )
+
+    def test_splits_without_calculation_still_load(self, context: AppContext) -> None:
+        # So sehen Splits aus, die vor dieser Funktion gespeichert wurden.
+        invoice = self._invoice(context)
+        context.database.execute(
+            "UPDATE costs SET splits = ? WHERE cost_id = ?",
+            ('[{"from": "2024-06-01", "to": "2025-05-31", "amount": 305685, "consumption": "39135"}]', invoice.id),
+        )
+
+        (stored,) = context.costs.list_costs(invoice.property_id)
+
+        assert stored.splits[0].calculation is None
+
+    def test_single_split_over_whole_period_behaves_like_no_split(self, context: AppContext) -> None:
+        whole = InvoiceSplit(
+            INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"),
+            SplitCalculation(working_price=WORKING_PRICE, base_price=BASE_PRICE, vat_percent=VAT),
+        )
+        with_split = Cost(1, self._invoice(context).cost_type, INVOICE_AMOUNT, INVOICE_PERIOD, AllocationKey.CONSUMPTION_AREA,
+                          consumption=Decimal("39135"), consumption_unit="kWh", splits=[whole], id=7)
+        without = Cost(1, with_split.cost_type, INVOICE_AMOUNT, INVOICE_PERIOD, AllocationKey.CONSUMPTION_AREA,
+                       consumption=Decimal("39135"), consumption_unit="kWh", id=7)
+
+        (piece,) = with_split.pieces(DateRange.for_year(2025))
+        (plain,) = without.pieces(DateRange.for_year(2025))
+
+        # Taggenau 151 von 365 Tagen - und nicht als "Abschnitt" gekennzeichnet.
+        assert (piece.amount, piece.consumption, piece.period) == (plain.amount, plain.consumption, plain.period)
+        assert piece.split_period is None
+
+
+class TestDialog:
+    def _fill(self, dialog: SplitsDialog) -> None:
+        dialog._working_price_spin.set_decimal(WORKING_PRICE)
+        dialog._base_price_spin.set_decimal(BASE_PRICE)
+        for index, (start, end, volume, z, h, _kwh, _amount) in enumerate(ROWS):
+            dialog._add_row(InvoiceSplit(DateRange(start, end), Money.zero()))
+            dialog._spin(index, _COL_VOLUME).set_decimal(Decimal(volume))
+            dialog._spin(index, _COL_CONDITION).set_decimal(Decimal(z))
+            dialog._spin(index, _COL_CALORIFIC).set_decimal(Decimal(h))
+        dialog._apply_prices_to_all()
+
+    def test_entering_volume_and_prices_reproduces_the_invoice(self, qt_app: QApplication) -> None:
+        dialog = SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"), "kWh", [])
+
+        self._fill(dialog)
+
+        assert dialog._check() is None, dialog._status.text()
+        assert dialog._status.text().startswith("✓")
+        dialog._accept_if_valid()
+        assert [(s.consumption, s.amount) for s in dialog.splits] == [
+            (Decimal(kwh), Money.from_decimal(amount)) for *_rest, kwh, amount in ROWS
+        ]
+        assert dialog.splits == _splits()
+        # Berechnete Felder sind gesperrt.
+        assert dialog._spin(0, _COL_CONSUMPTION).isReadOnly() and dialog._amount_spin(0).isReadOnly()
+
+    def test_totals_can_be_taken_from_the_calculation(self, qt_app: QApplication) -> None:
+        # Der Benutzer hat weder Gesamtbetrag noch Gesamtverbrauch eingetragen.
+        dialog = SplitsDialog(INVOICE_PERIOD, Money.zero(), None, "kWh", [])
+        self._fill(dialog)
+        assert dialog._check() is not None
+
+        dialog._adopt_sums()
+
+        assert dialog._check() is None, dialog._status.text()
+        # Ohne Rechnungsbetrag wird jede Zeile für sich gerundet - das ergibt hier
+        # einen Cent mehr, als der Versorger (mit anderer Rundung) ausweist.
+        assert dialog.invoice_amount == INVOICE_AMOUNT + Money(1)
+        assert dialog.invoice_consumption == Decimal("39135")
+
+    def test_existing_calculation_is_shown_again(self, qt_app: QApplication) -> None:
+        dialog = SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"), "kWh", _splits())
+
+        assert dialog._working_price_spin.decimal_value() == WORKING_PRICE
+        assert dialog._vat_spin.decimal_value() == VAT
+        assert dialog._spin(3, _COL_VOLUME).decimal_value() == Decimal("1954")
+        assert dialog._spin(3, _COL_WORKING_PRICE).decimal_value() == WORKING_PRICE
+        assert dialog._spin(3, _COL_BASE_PRICE).decimal_value() == BASE_PRICE
+        assert dialog._check() is None
+
+    def test_manual_entry_without_calculation_still_works(self, qt_app: QApplication) -> None:
+        manual = [
+            InvoiceSplit(DateRange(date(2024, 6, 1), date(2024, 12, 31)), Money.from_decimal("1411.94"), Decimal("17725")),
+            InvoiceSplit(DateRange(date(2025, 1, 1), date(2025, 5, 31)), Money.from_decimal("1644.91"), Decimal("21410")),
+        ]
+        dialog = SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"), "kWh", manual)
+
+        assert dialog._check() is None
+        assert not dialog._amount_spin(0).isReadOnly()
+        dialog._accept_if_valid()
+        assert dialog.splits == manual  # keine Rechengrundlagen -> calculation bleibt None

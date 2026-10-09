@@ -1,0 +1,6 @@
+# Zeilenenden automatisch behandeln, Binärdateien unverändert lassen
+* text=auto
+*.bat text eol=crlf
+*.pdf binary
+*.png binary
+*.db binary

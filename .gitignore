@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Laufzeitdateien der Anwendung (enthalten lokale Pfade bzw. Daten)
+config.json
+config.json.tmp
+logs/
+*.db
+*.db.*.bak
+
+# Werkzeuge und Betriebssystem
+.idea/
+.vscode/
+Thumbs.db

@@ -1,0 +1,20 @@
+[project]
+name = "nebenkostenabrechnung"
+version = "1.0.0"
+description = "Desktop-Software zur Nebenkostenabrechnung für Mietwohnungen"
+requires-python = ">=3.11"
+dependencies = [
+    "PyQt6>=6.6",
+    "reportlab>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[tool.pytest.ini_options]
+# Projektordner in den Suchpfad aufnehmen, damit "import models" usw. funktioniert.
+pythonpath = ["."]
+testpaths = ["tests"]

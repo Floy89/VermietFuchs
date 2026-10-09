@@ -1,0 +1,377 @@
+/* ==========================================================================
+   Stylesheet der Nebenkostenabrechnung
+   --------------------------------------------------------------------------
+   Platzhalter in doppelten geschweiften Klammern (z. B. {{primary}}) werden
+   beim Laden durch die Farben des gewählten Farbschemas ersetzt - siehe
+   ui/styles/__init__.py. So gibt es nur EIN Stylesheet für Hell und Dunkel.
+   ========================================================================== */
+
+QWidget {
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 10pt;
+    color: {{text}};
+}
+
+QMainWindow, QDialog {
+    background-color: {{bg}};
+}
+
+/* --- Kopfzeile ----------------------------------------------------------- */
+#HeaderBar {
+    background-color: {{surface}};
+    border-bottom: 1px solid {{border}};
+}
+#AppTitle {
+    font-size: 13pt;
+    font-weight: 600;
+}
+QToolButton#UserButton {
+    background-color: transparent;
+    border: 1px solid {{border}};
+    border-radius: 16px;
+    padding: 5px 14px 5px 10px;
+    font-weight: 600;
+}
+QToolButton#UserButton:hover {
+    background-color: {{hover}};
+}
+QToolButton#UserButton::menu-indicator {
+    image: none;
+}
+
+/* --- Überschriften und Texte --------------------------------------------- */
+#PageTitle {
+    font-size: 16pt;
+    font-weight: 600;
+}
+#SectionTitle {
+    font-size: 11pt;
+    font-weight: 600;
+}
+#Muted {
+    color: {{muted}};
+}
+#ErrorLabel {
+    color: {{danger}};
+    font-weight: 600;
+}
+#WarningBox {
+    background-color: {{warning_bg}};
+    border: 1px solid {{warning_border}};
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: {{warning_text}};
+}
+
+/* --- Karten -------------------------------------------------------------- */
+#Card {
+    background-color: {{surface}};
+    border: 1px solid {{border}};
+    border-radius: 10px;
+}
+#StatValue {
+    font-size: 17pt;
+    font-weight: 600;
+}
+#StatLabel {
+    color: {{muted}};
+    font-size: 9pt;
+}
+
+/* --- Haupt-Tabs ---------------------------------------------------------- */
+QTabWidget::pane {
+    border: none;
+    border-top: 1px solid {{border}};
+}
+QTabBar {
+    background-color: {{surface}};
+    qproperty-drawBase: 0;
+}
+QTabBar::tab {
+    background-color: transparent;
+    color: {{muted}};
+    padding: 10px 16px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    font-weight: 600;
+}
+QTabBar::tab:selected {
+    color: {{primary}};
+    border-bottom: 3px solid {{primary}};
+}
+QTabBar::tab:hover:!selected {
+    color: {{text}};
+}
+
+/* --- Schaltflächen ------------------------------------------------------- */
+QPushButton {
+    background-color: {{surface}};
+    border: 1px solid {{border}};
+    border-radius: 6px;
+    padding: 6px 12px;
+}
+QPushButton:hover {
+    background-color: {{hover}};
+}
+QPushButton:pressed {
+    background-color: {{pressed}};
+}
+QPushButton:disabled {
+    color: {{disabled}};
+    background-color: {{bg}};
+}
+QPushButton[variant="primary"] {
+    background-color: {{primary}};
+    border-color: {{primary}};
+    color: #FFFFFF;
+    font-weight: 600;
+}
+QPushButton[variant="primary"]:hover {
+    background-color: {{primary_hover}};
+    border-color: {{primary_hover}};
+}
+QPushButton[variant="primary"]:disabled {
+    background-color: {{disabled}};
+    border-color: {{disabled}};
+    color: {{surface}};
+}
+QPushButton[variant="danger"] {
+    color: {{danger}};
+}
+QPushButton[variant="danger"]:hover {
+    background-color: {{danger}};
+    border-color: {{danger}};
+    color: #FFFFFF;
+}
+QPushButton[variant="danger"]:disabled {
+    color: {{disabled}};
+}
+
+/* --- Eingabefelder ------------------------------------------------------- */
+QLineEdit, QPlainTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {
+    background-color: {{input}};
+    border: 1px solid {{border}};
+    border-radius: 6px;
+    padding: 5px 8px;
+    min-height: 20px;
+    selection-background-color: {{primary}};
+    selection-color: #FFFFFF;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QDateEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid {{primary}};
+}
+QLineEdit:disabled, QComboBox:disabled, QDateEdit:disabled,
+QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: {{disabled}};
+    background-color: {{bg}};
+}
+/* Aufklapp-Pfeil von Auswahl- und Datumsfeldern */
+QComboBox::drop-down, QDateEdit::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 26px;
+    border: none;
+}
+QComboBox::down-arrow, QDateEdit::down-arrow {
+    image: url({{arrow_down}});
+    width: 13px;
+    height: 13px;
+}
+/* Auf/Ab-Knöpfe der Zahlenfelder */
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 22px;
+    border: none;
+    margin-top: 3px;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 22px;
+    border: none;
+    margin-bottom: 3px;
+}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+    image: url({{arrow_up}});
+    width: 10px;
+    height: 10px;
+}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+    image: url({{arrow_down}});
+    width: 10px;
+    height: 10px;
+}
+QSpinBox, QDoubleSpinBox {
+    padding-right: 24px;
+}
+QComboBox QAbstractItemView {
+    background-color: {{surface}};
+    border: 1px solid {{border}};
+    selection-background-color: {{selection}};
+    selection-color: {{text}};
+    outline: none;
+}
+
+/* --- Kontrollkästchen ---------------------------------------------------- */
+QCheckBox {
+    spacing: 8px;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid {{muted}};
+    border-radius: 4px;
+    background-color: {{input}};
+}
+QCheckBox::indicator:hover {
+    border-color: {{primary}};
+}
+QCheckBox::indicator:checked {
+    background-color: {{primary}};
+    border-color: {{primary}};
+    image: url({{check}});
+}
+
+/* --- Tabellen ------------------------------------------------------------ */
+QTableView {
+    background-color: {{surface}};
+    alternate-background-color: {{alt_row}};
+    border: 1px solid {{border}};
+    border-radius: 8px;
+    gridline-color: transparent;
+    selection-background-color: {{selection}};
+    selection-color: {{text}};
+    outline: none;
+}
+QTableView::item {
+    padding: 4px 8px;
+    border: none;
+}
+QHeaderView {
+    background-color: transparent;
+}
+QHeaderView::section {
+    background-color: {{header}};
+    color: {{muted}};
+    border: none;
+    border-bottom: 1px solid {{border}};
+    padding: 7px 8px;
+    font-weight: 600;
+}
+QTableCornerButton::section {
+    background-color: {{header}};
+    border: none;
+}
+
+/* --- Baumansicht (aggregierte Rechnungen) --------------------------------- */
+QTreeView {
+    background-color: {{surface}};
+    alternate-background-color: {{alt_row}};
+    border: 1px solid {{border}};
+    border-radius: 8px;
+    selection-background-color: {{selection}};
+    selection-color: {{text}};
+    outline: none;
+}
+QTreeView::item {
+    padding: 5px 6px;
+    border: none;
+}
+QTreeView::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid {{muted}};
+    border-radius: 4px;
+    background-color: {{input}};
+}
+QTreeView::indicator:checked {
+    background-color: {{primary}};
+    border-color: {{primary}};
+    image: url({{check}});
+}
+
+/* --- Listen (Benutzerauswahl) -------------------------------------------- */
+QListWidget {
+    background-color: {{surface}};
+    border: 1px solid {{border}};
+    border-radius: 8px;
+    outline: none;
+}
+QListWidget::item {
+    padding: 9px 10px;
+    border-bottom: 1px solid {{border}};
+}
+QListWidget::item:selected {
+    background-color: {{selection}};
+    color: {{text}};
+}
+
+/* --- Menüs, Tooltips, Statuszeile ---------------------------------------- */
+QMenu {
+    background-color: {{surface}};
+    border: 1px solid {{border}};
+    border-radius: 8px;
+    padding: 5px;
+}
+QMenu::item {
+    padding: 7px 22px 7px 12px;
+    border-radius: 5px;
+}
+QMenu::item:selected {
+    background-color: {{selection}};
+    color: {{text}};
+}
+QMenu::separator {
+    height: 1px;
+    background-color: {{border}};
+    margin: 5px 8px;
+}
+QToolTip {
+    background-color: {{text}};
+    color: {{surface}};
+    border: none;
+    padding: 5px 8px;
+}
+QStatusBar {
+    background-color: {{surface}};
+    border-top: 1px solid {{border}};
+    color: {{muted}};
+}
+QStatusBar QLabel {
+    color: {{muted}};
+    padding: 2px 8px;
+}
+
+/* --- Splitter und Scrollbalken ------------------------------------------- */
+QSplitter::handle {
+    background-color: transparent;
+}
+QScrollBar:vertical {
+    background: transparent;
+    width: 11px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical {
+    background: {{scroll}};
+    border-radius: 3px;
+    min-height: 28px;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 11px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal {
+    background: {{scroll}};
+    border-radius: 3px;
+    min-width: 28px;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+}
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
