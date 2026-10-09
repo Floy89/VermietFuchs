@@ -1,4 +1,6 @@
-# Nebenkostenabrechnung
+<p align="center"><img src="ui/resources/logo.png" alt="VermietFuchs" width="360"></p>
+
+# VermietFuchs
 
 Desktop-Software zur Verwaltung und Abrechnung von Nebenkosten für Mietwohnungen - für private
 Vermieter mit einem oder wenigen Häusern. Kostenlos und quelloffen (GPL v3).
@@ -16,7 +18,7 @@ dafür nicht nötig:
 
 1. ZIP herunterladen und in einen Ordner entpacken, in dem Sie schreiben dürfen (z. B. unter
    *Dokumente* - nicht unter *Programme*).
-2. `Nebenkostenabrechnung.exe` starten und einen Benutzer anlegen.
+2. `VermietFuchs.exe` starten und einen Benutzer anlegen.
 
 Beim ersten Start meldet Windows SmartScreen einen „unbekannten Herausgeber", weil die Datei
 nicht kostenpflichtig signiert ist: **Weitere Informationen → Trotzdem ausführen**.
@@ -65,7 +67,7 @@ Speicherort angeben - die Anwendung legt `<Speicherort>\<Name>\benutzer.db` an.
 ### Demo-Daten zum Ausprobieren
 
 ```powershell
-.venv\Scripts\python.exe -m tools.demo_data "$env:USERPROFILE\Documents\Nebenkostenabrechnung"
+.venv\Scripts\python.exe -m tools.demo_data "$env:USERPROFILE\Documents\VermietFuchs"
 ```
 
 Legt den Benutzer `Demo_Vermieter` mit zwei Häusern, sieben Mietern (inkl. Mieterwechsel und
@@ -94,8 +96,8 @@ Mieterwechsel, Messdienst-Beträgen, Wasserzählern und Rechnungen über den Jah
 .\build_exe.bat
 ```
 
-Ergebnis: der Ordner `dist\Nebenkostenabrechnung` mit der `Nebenkostenabrechnung.exe` und ihren
-Bibliotheken sowie dieselben Dateien als `dist\Nebenkostenabrechnung-<Version>-windows.zip` zum
+Ergebnis: der Ordner `dist\VermietFuchs` mit der `VermietFuchs.exe` und ihren
+Bibliotheken sowie dieselben Dateien als `dist\VermietFuchs-<Version>-windows.zip` zum
 Weitergeben. Der Ordner kann an einen beliebigen Ort kopiert werden; `config.json` und der
 Ordner `logs` entstehen beim ersten Start **neben der .exe**. Was das Skript tut, steht
 kommentiert in [build_exe.bat](build_exe.bat).
@@ -103,6 +105,24 @@ kommentiert in [build_exe.bat](build_exe.bat).
 Bewusst ein Ordner statt einer einzelnen `.exe`: Eine Einzeldatei müsste sich bei jedem Start
 erst in einen temporären Ordner entpacken - das dauert und wird von Virenscannern häufiger
 fälschlich gemeldet.
+
+**Neue Version veröffentlichen.** Die Versionsnummer steht in `config.py` (`APP_VERSION`) und
+in `pyproject.toml`. Nach dem Anheben und Committen genügt ein Tag:
+
+```powershell
+git tag v1.1.0
+git push origin main --tags
+```
+
+GitHub baut daraufhin automatisch die `.exe` (Workflow `.github/workflows/release.yml`): Tests
+laufen, die ZIP-Datei wird erzeugt und an das Release der Version gehängt. Passt der Tag nicht
+zur Versionsnummer im Code, bricht der Workflow mit einem Hinweis ab.
+
+App-Symbol und Logo entstehen aus den Originalbildern in `pictures/`:
+
+```powershell
+.venv\Scripts\python.exe -m tools.make_assets
+```
 
 Die Screenshots lassen sich jederzeit neu erzeugen:
 
@@ -539,7 +559,7 @@ Die Schemaversion steht in `PRAGMA user_version`; neue Versionen werden in
 | PDF lässt sich nicht speichern | Die Datei ist noch im PDF-Betrachter geöffnet |
 | Hinweis „ersatzweise nach Wohnfläche verteilt" | Für die Kostenart fehlen Zählerstände zu Beginn/Ende des Zeitraums |
 | Kostenposition zählt nur teilweise | Ihr Rechnungszeitraum ragt über den Abrechnungszeitraum hinaus - Spalte „davon im Zeitraum" |
-| Unerwarteter Fehler | Details in `logs\nebenkostenabrechnung.log` (neben `main.py` bzw. der .exe) |
+| Unerwarteter Fehler | Details in `logs\vermietfuchs.log` (neben `main.py` bzw. der .exe) |
 
 ---
 

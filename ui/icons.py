@@ -11,12 +11,14 @@ Vorteile gegenüber Bilddateien:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Final, Mapping
 
 from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
+import config
 from ui import styles
 
 _SVG_TEMPLATE: Final[str] = (
@@ -62,6 +64,37 @@ _ICON_BODIES: Final[Mapping[str, str]] = {
     "coins": '<ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7"/>'
     '<path d="M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/>',
 }
+
+def _resource(file_name: str) -> Path:
+    """Pfad einer mitgelieferten Grafik (im Projektordner bzw. in der gepackten Anwendung)."""
+    return config.resource_dir() / "ui" / "resources" / file_name
+
+
+def app_icon() -> QIcon:
+    """Das App-Symbol (Fuchs mit Haus) für Fenster und Taskleiste.
+
+    Fehlt die Bilddatei, dient das gezeichnete Haus-Symbol als Ersatz - das
+    Programm soll an einer fehlenden Grafik nicht scheitern.
+    """
+    pixmap_ = QPixmap(str(_resource("app_icon.png")))
+    return QIcon(pixmap_) if not pixmap_.isNull() else icon("home", styles.color("primary"))
+
+
+def app_pixmap(size: int) -> QPixmap:
+    """Das App-Symbol in fester Größe, geglättet verkleinert."""
+    return app_icon().pixmap(QSize(size, size))
+
+
+def logo_pixmap(width: int) -> QPixmap:
+    """Das Logo mit Schriftzug in der gewünschten Breite; leer, wenn die Datei fehlt.
+
+    Der Schriftzug ist dunkel - das Logo eignet sich nur für helle Flächen.
+    """
+    pixmap_ = QPixmap(str(_resource("logo.png")))
+    if pixmap_.isNull():
+        return pixmap_
+    return pixmap_.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+
 
 # Fertig gerenderte Icons; Schlüssel ist (Name, Farbe).
 _cache: dict[tuple[str, str], QIcon] = {}

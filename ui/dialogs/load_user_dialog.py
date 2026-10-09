@@ -45,20 +45,26 @@ class LoadUserDialog(QDialog):
         self.context: AppContext | None = None
 
         self.setWindowTitle(config.APP_NAME)
-        self.setMinimumSize(620, 460)
+        self.setWindowIcon(icons.app_icon())
+        self.setMinimumSize(620, 640)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(12)
 
-        title_row = QHBoxLayout()
+        # Das Logo mit Schriftzug - der Startdialog ist immer hell, dort ist es gut lesbar.
         logo = QLabel()
-        logo.setPixmap(icons.pixmap("home", 34, styles.color("primary")))
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo_image = icons.logo_pixmap(330)
+        if logo_image.isNull():
+            logo.setPixmap(icons.app_pixmap(96))
+        else:
+            logo.setPixmap(logo_image)
+        layout.addWidget(logo)
+
         title = QLabel("Benutzer wählen")
         title.setObjectName("PageTitle")
-        title_row.addWidget(logo)
-        title_row.addWidget(title, 1)
-        layout.addLayout(title_row)
+        layout.addWidget(title)
 
         hint = QLabel(
             "Jeder Benutzer hat eine eigene Datenbankdatei (benutzer.db). "

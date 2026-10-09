@@ -1,0 +1,67 @@
+# Baut bei jedem Versions-Tag (z. B. v1.1.0) die Windows-Anwendung und hängt
+# sie als ZIP-Datei an das GitHub-Release dieser Version.
+#
+# Auslöser:  git tag v1.1.0  &&  git push origin main --tags
+#            (oder: auf GitHub ein Release mit einem neuen Tag v1.1.0 anlegen)
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # Release anlegen und Datei hochladen
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      # Die Oberflächen-Tests laufen ohne sichtbares Fenster.
+      QT_QPA_PLATFORM: offscreen
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # build_exe.bat erwartet die Abhängigkeiten in .venv - wie auf dem Entwicklungsrechner.
+      - name: Abhängigkeiten installieren
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+
+      - name: Tag und Versionsnummer müssen übereinstimmen
+        shell: pwsh
+        run: |
+          $version = (& .venv\Scripts\python.exe -c "import config; print(config.APP_VERSION)").Trim()
+          if ("v$version" -ne $env:TAG) {
+            Write-Error "Der Tag '$env:TAG' passt nicht zu APP_VERSION '$version' in config.py. Bitte die Versionsnummer anheben und den Tag neu setzen."
+            exit 1
+          }
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Tests
+        shell: pwsh
+        run: .venv\Scripts\python.exe -m pytest -q
+
+      - name: Anwendung bauen
+        shell: cmd
+        run: call build_exe.bat
+
+      - name: ZIP an das Release hängen
+        shell: pwsh
+        run: |
+          $zip = "dist\VermietFuchs-$env:APP_VERSION-windows.zip"
+          if (-not (Test-Path $zip)) { Write-Error "Die Datei $zip wurde nicht erzeugt."; exit 1 }
+          # Das Release anlegen, falls es noch keines gibt (z. B. wenn nur der Tag gepusht wurde).
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG --title "VermietFuchs $env:APP_VERSION" --generate-notes
+          }
+          gh release upload $env:TAG $zip --clobber

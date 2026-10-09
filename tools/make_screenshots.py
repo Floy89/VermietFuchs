@@ -291,7 +291,7 @@ def main() -> None:
         for row in range(load_dialog._list.count()):
             entry_item = load_dialog._list.item(row)
             entry_item.setText(
-                entry_item.text().replace(str(temp_dir / "Daten"), r"C:\Users\Beispiel\Documents\Nebenkostenabrechnung")
+                entry_item.text().replace(str(temp_dir / "Daten"), r"C:\Users\Beispiel\Documents\VermietFuchs")
             )
         load_dialog.show()
         _grab(load_dialog, "00_benutzerauswahl")
@@ -307,7 +307,7 @@ def main() -> None:
         # Die Demo-Datenbank liegt in einem temporären Ordner des angemeldeten
         # Windows-Benutzers - für die Bilder einen neutralen Pfad anzeigen.
         window._status_label.setText(
-            "Datenbank: C:\\Users\\Beispiel\\Documents\\Nebenkostenabrechnung\\Demo_Vermieter\\benutzer.db"
+            "Datenbank: C:\\Users\\Beispiel\\Documents\\VermietFuchs\\Demo_Vermieter\\benutzer.db"
         )
         window.show()
         tabs = window._tabs

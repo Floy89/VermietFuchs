@@ -1,7 +1,7 @@
 [project]
-name = "nebenkostenabrechnung"
+name = "vermietfuchs"
 version = "1.0.0"
-description = "Desktop-Software zur Nebenkostenabrechnung für Mietwohnungen"
+description = "VermietFuchs - Desktop-Software zur Nebenkostenabrechnung für Mietwohnungen"
 requires-python = ">=3.11"
 dependencies = [
     "PyQt6>=6.6",

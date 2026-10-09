@@ -21,7 +21,7 @@ import config
 from integrations.ollama_client import OllamaReceiptScanner
 from services.receipt_scan_service import ReceiptScanService
 from services.user_service import UserService
-from ui import styles
+from ui import icons, styles
 from ui.helpers import dispose_all_widgets
 from ui.dialogs.load_user_dialog import LoadUserDialog
 from ui.main_window import MainWindow
@@ -116,6 +116,13 @@ def main() -> int:
 
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName(config.APP_NAME)
+    if sys.platform == "win32":
+        # Eigene Kennung für die Taskleiste: Sonst zeigt Windows beim Start über
+        # python.exe das Python-Symbol statt des App-Symbols.
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Floy89.VermietFuchs")
+    qt_app.setWindowIcon(icons.app_icon())
     qt_app.setApplicationVersion(config.APP_VERSION)
     _install_german_translation(qt_app)
     sys.excepthook = _handle_uncaught_exception

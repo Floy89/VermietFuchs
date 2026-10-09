@@ -11,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 _LOG_FORMAT = "%(asctime)s  %(levelname)-8s  %(name)s: %(message)s"
-_LOG_FILE_NAME = "nebenkostenabrechnung.log"
+_LOG_FILE_NAME = "vermietfuchs.log"
 
 
 def setup_logging(directory: Path, level: int = logging.INFO) -> None:

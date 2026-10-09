@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._context = context
         self.setWindowTitle(f"{config.APP_NAME} – {context.user.name}")
-        self.setWindowIcon(icons.icon("home", styles.color("primary")))
+        self.setWindowIcon(icons.app_icon())
         self.resize(1360, 860)
         self.setMinimumSize(1080, 680)
 
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         logo = QLabel()
-        logo.setPixmap(icons.pixmap("home", 26, styles.color("primary")))
+        logo.setPixmap(icons.app_pixmap(30))
         title = QLabel(config.APP_NAME)
         title.setObjectName("AppTitle")
         layout.addWidget(logo)
@@ -211,17 +211,23 @@ class MainWindow(QMainWindow):
 
     def _show_info(self) -> None:
         """Zeigt Programmversion und Speicherorte."""
-        QMessageBox.about(
-            self,
-            f"Über {config.APP_NAME}",
-            f"<b>{config.APP_NAME}</b><br>Version {config.APP_VERSION}<br><br>"
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Über {config.APP_NAME}")
+        box.setIconPixmap(icons.app_pixmap(96))
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(
+            f"<b>{config.APP_NAME}</b> &nbsp;Version {config.APP_VERSION}<br>"
+            f"{config.APP_TAGLINE}<br><br>"
             "Verwaltung und Abrechnung von Nebenkosten für Mietwohnungen.<br>"
-            "Alle Daten bleiben lokal auf diesem Rechner bzw. dem gewählten Laufwerk.<br><br>"
+            "Alle Daten bleiben lokal auf diesem Rechner bzw. dem gewählten Laufwerk.<br>"
+            "Freie Software unter der GNU General Public License, Version 3 - ohne Gewähr; "
+            "keine Rechtsberatung.<br><br>"
             f"<b>Benutzer:</b> {self._context.user.name}<br>"
             f"<b>Datenbank:</b> {self._context.database.path}<br>"
             f"<b>Benutzerliste:</b> {config.config_file()}<br>"
-            f"<b>Logdateien:</b> {config.log_dir()}",
+            f"<b>Logdateien:</b> {config.log_dir()}"
         )
+        box.exec()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 (Qt-Name)
         """Schließt beim Beenden die Datenbank sauber."""
