@@ -33,7 +33,7 @@ Weitere Screenshots liegen in [docs/screenshots](docs/screenshots), ein Beispiel
 
 ---
 
-## 1. Einrichtung (einmalig)
+## 1. Einrichtung (einmalig bei Verwendung des Source Codes - nicht nötig bei Verwendung der Release .exe-Datei)
 
 ### 1.1 Python installieren
 
