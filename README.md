@@ -52,7 +52,8 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
-`requirements.txt` enthält nur die Laufzeit-Pakete (PyQt6, ReportLab),
+`requirements.txt` enthält nur die Laufzeit-Pakete (PyQt6, ReportLab, unter Windows die
+`winrt`-Pakete für die Texterkennung),
 `requirements-dev.txt` zusätzlich pytest und PyInstaller.
 
 ## 2. Starten
@@ -146,7 +147,8 @@ Die Screenshots lassen sich jederzeit neu erzeugen:
 | **Berichte** | Abrechnungsschreiben als PDF, Änderungsprotokoll (Audit Trail) |
 
 Oben rechts im Benutzer-Menü: **Benutzer wechseln**, **Einstellungen** (Absender- und
-Bankdaten für die PDFs), **Belegerkennung**, **Helles/Dunkles Design**, **Info**.
+Bankdaten für die PDFs), **Gelernte Absender** (siehe *Belege auslesen*), **Belegerkennung**
+(optionale KI), **Helles/Dunkles Design**, **Info**.
 
 Typischer Ablauf: Immobilie + Wohnungen anlegen → Mieter mit Vorauszahlung anlegen →
 Zählerstände erfassen → im Tab *Rechnungen* die Belege eintragen → im Tab *Abrechnung* das
@@ -216,7 +218,7 @@ an den Messdienst.
 
 **Splits.** Weist eine Rechnung mehrere Abschnitte aus (Ablesetermine, Preisänderung), lassen
 sich diese als Splits hinterlegen: je Abschnitt Zeitraum, Betrag und Verbrauch (Rechnung
-bearbeiten → **Splits bearbeiten …**). Dann gilt:
+bearbeiten → **Splits / Berechnung …**). Dann gilt:
 
 - Sind Splits vorhanden, bestimmen **allein sie**, welcher Teil der Rechnung in welches Jahr
   fällt. Ein Split, der selbst über den Jahreswechsel reicht, wird taggenau geteilt.
@@ -239,14 +241,27 @@ Rechengrundlagen eintragen:
 
 - Die Preise stehen oben in der Leiste und werden mit **Auf alle Abschnitte anwenden** in jede
   Zeile übernommen; bei einer Preisänderung lassen sie sich je Zeile ändern.
-- Der Grundpreis wird taggenau je Kalenderjahr gerechnet (Schaltjahr: 366 Tage).
-- Berechnete Felder sind grau und gesperrt. Wer Verbrauch oder Betrag selbst eintragen will,
-  lässt die Rechengrundlagen der Zeile leer.
+- Der Grundpreis wird taggenau je Kalenderjahr gerechnet (Schaltjahr: 366 Tage) - oder, mit
+  dem Haken *Grundpreis je 365 Tage (auch im Schaltjahr)*, starr mit 1/365 je Tag, wie manche
+  Versorger es tun („153,00 Euro / 365 Tage"). Beim Auslesen wird der Haken anhand der Rechnung
+  gesetzt.
+- Arbeits- und Grundpreisanteil werden wie auf Rechnungen je auf Cent gerundet, erst dann kommt
+  die Umsatzsteuer dazu.
+- Berechnete Felder sind grau. Der berechnete Verbrauch ist gesperrt; wer ihn selbst eintragen
+  will, lässt Volumen, Zustandszahl und Brennwert leer.
 - Versorger runden jede Preiszeile einzeln. Weicht die berechnete Summe höchstens 10 Cent vom
   Rechnungsbetrag ab, wird der Rechnungsbetrag im Verhältnis verteilt, damit die Summe exakt
   stimmt; größere Abweichungen bleiben als Fehler sichtbar.
 - **Summen als Rechnungssummen übernehmen** setzt Gesamtbetrag und Gesamtverbrauch der Rechnung
   auf die Summen der Splits - für den Fall, dass man sie gar nicht erst eintragen möchte.
+- **Beträge korrigieren:** Ein berechneter Betrag lässt sich überschreiben. Die Zeile wird dann
+  farbig als *von Hand korrigiert* markiert (Tooltip: der berechnete Wert), beim Speichern
+  gemerkt und nicht mehr neu berechnet. **Berechnung wiederherstellen** setzt die markierte
+  Zeile (ohne Auswahl: alle korrigierten) zurück. Eine Korrektur verschiebt keine Cent in andere
+  Zeilen - der Unterschied zur Rechnung bleibt sichtbar.
+- **Differenz als Eintrag:** Bleibt ein Restbetrag (meist Rundungscent), trägt dieser Knopf ihn
+  als eigenen Eintrag ein. Er gilt für den ganzen Rechnungszeitraum, hat keinen Verbrauch, darf
+  negativ sein und wird bei der Jahreszuordnung linear nach Tagen auf die übrigen Splits verteilt.
 - Soll nur die ganze Rechnung berechnet werden, genügt ein einziger Abschnitt über den gesamten
   Rechnungszeitraum; er wird wie eine Rechnung ohne Splits taggenau verteilt.
 - Für die Abrechnung zählen allein Betrag und Verbrauch der Splits. Die Rechengrundlagen werden
@@ -262,6 +277,23 @@ Rechengrundlagen eintragen:
 *Alle Jahre* oder *Eigener Zeitraum …* mit frei wählbarem Von/Bis (z. B. 01.07.–30.06. für
 ein abweichendes Wirtschaftsjahr). Beim eigenen Zeitraum entsteht je Kostenart eine Summe für
 genau diesen Zeitraum; für Häkchen und Namen zählt - wie in der Abrechnung - das Jahr des Beginns.
+
+### CO2-Kosten für den Messdienst
+
+Seit 2023 weisen Brennstoff- und Heizungsrechnungen die **CO2-Kosten** und den **CO2-Ausstoß**
+aus (CO2-Kostenaufteilungsgesetz). Der Vermieter meldet sie zusammen mit Verbrauch und Betrag an
+den Messdienst, der daraus die Aufteilung zwischen Mieter und Vermieter berechnet.
+
+- Bei Kostenarten für Heizung und Warmwasser (z. B. *Brennstoffkosten (Gas/Öl)*) hat der
+  Rechnungsdialog die Zeile **CO2 laut Rechnung**: Kosten brutto, Ausstoß in kg und optional der
+  Emissionsfaktor. **Beleg auslesen …** trägt sie aus der Rechnung ein.
+- Im Tab *Rechnungen* zeigt die aggregierte Rechnung je Jahr die Summen **CO2-Kosten** und
+  **CO2-Ausstoß**, darunter die Anteile je Rechnung. Fehlen bei einer Rechnung die Angaben, ist
+  die Summe farbig markiert.
+- Läuft eine Rechnung über den Jahreswechsel, zählen die CO2-Werte **je Split** (Split-Dialog,
+  Spalten *CO2-Kosten* und *CO2 (kg)*; beim Auslesen aus der CO2-Tabelle der Rechnung). Ohne
+  Angaben je Split wird die Summe nach Verbrauch aufgeteilt - beim Ausstoß genau, bei den Kosten
+  nur näherungsweise, weil der CO2-Preis zum Jahreswechsel steigt.
 
 ### Entwicklung und Prognose
 
@@ -361,29 +393,8 @@ Preis seines Zeitraums. Die Splits werden so berechnet wie im Split-Dialog; die 
 Preiszeilen dienen zur Kontrolle. Passt ein gelesener Preis nicht dazu (Texterkennung: "151"
 statt "151,20"), wird er korrigiert.
 
-**Grundpreis im Schaltjahr:** Manche Versorger rechnen den Jahres-Grundpreis kalendergenau
-(2024: 1/366 je Tag), andere starr mit 1/365 ("153,00 Euro / 365 Tage"). Der Split-Dialog hat
-dafür den Haken *Grundpreis je 365 Tage (auch im Schaltjahr)*; beim Auslesen wird er anhand der
-Rechnung gesetzt. Arbeits- und Grundpreisanteil werden wie auf Rechnungen je auf Cent gerundet.
-
-**Beträge korrigieren:** Ein berechneter Split-Betrag lässt sich im Split-Dialog überschreiben. Die
-Zeile wird dann farbig als *von Hand korrigiert* markiert (Tooltip: berechneter Wert), beim
-Speichern gemerkt und nicht mehr neu berechnet. **Berechnung wiederherstellen** setzt die
-markierte Zeile (ohne Auswahl: alle korrigierten) zurück. Eine Korrektur verschiebt keine Cent in
-andere Zeilen - der Unterschied zur Rechnung bleibt sichtbar.
-
-**CO2-Kosten (CO2-Kostenaufteilungsgesetz):** Bei Brennstoff- und Heizkosten hat der
-Rechnungsdialog die Felder *CO2 laut Rechnung* - Kosten brutto, Ausstoß in kg, Emissionsfaktor
-(optional). *Beleg auslesen …* trägt sie aus der Rechnung ein. Im Tab *Rechnungen* zeigt die
-aggregierte Rechnung je Jahr die Summen für die Meldung an den Messdienst (farbig, wenn eine
-Rechnung keine CO2-Angaben hat). Läuft eine Rechnung über den Jahreswechsel, zählen die CO2-Werte
-je Split (Split-Dialog, Spalten *CO2-Kosten* und *CO2 (kg)*, beim Auslesen aus der CO2-Tabelle
-der Rechnung) - sonst wird die Summe nach Verbrauch aufgeteilt. Das ist beim Ausstoß genau, bei
-den Kosten nur näherungsweise, weil der CO2-Preis zum Jahreswechsel steigt.
-
-**Differenz als Eintrag:** Bleibt ein Restbetrag (meist Rundungscent), trägt dieser Knopf ihn als
-eigenen Eintrag ein. Er gilt für den ganzen Rechnungszeitraum, hat keinen Verbrauch, darf negativ
-sein und wird bei der Jahreszuordnung linear nach Tagen auf die übrigen Splits verteilt.
+Neben Betrag und Verbrauch liest das Programm bei Brennstoffrechnungen auch die CO2-Angaben
+(siehe *CO2-Kosten für den Messdienst*).
 
 Grenzen: Die Regeln sind auf deutsche Versorger- und Gebührenrechnungen zugeschnitten. Bei
 schlechten Fotos liest die Texterkennung Ziffern falsch - darum werden die Werte nur
@@ -476,6 +487,13 @@ und es wird nach gemessenem Verbrauch verteilt. Beim Heizkosten-Mischschlüssel
 Als Zeitraum einer Kostenposition wird der **Rechnungszeitraum laut Beleg** eingetragen. Ragt
 er über den Abrechnungszeitraum hinaus (Strom 01.06.–31.05.), zählt automatisch nur der
 taggenaue Anteil; der Rest erscheint in der Abrechnung des Nachbarjahres.
+
+**Fehlende Zählerstände zu einem Split.** Der Versorger liest oft zu anderen Terminen ab als der
+Vermieter (Split bis 12.09., Wohnungszähler am 31.05. und 31.12.). Lässt sich für einen Split
+kein Verbrauch aus den Zählerständen bestimmen, gilt der Verbrauch zwischen den nächsten
+Ablesungen davor und danach (hier 31.05.–31.12.). Der Split wird damit wie die angrenzenden
+Splits dieses Zeitraums verteilt; der Tab *Abrechnung* nennt das im Hinweis. Erst wenn es auch
+davor oder danach keine Ablesung gibt, wird ersatzweise nach Wohnfläche verteilt.
 
 ### Vorauszahlungen
 
@@ -630,6 +648,10 @@ Die Schemaversion steht in `PRAGMA user_version`; neue Versionen werden in
 | Unerwarteter Fehler | Details in `logs\vermietfuchs.log` (neben `main.py` bzw. der .exe) |
 
 ---
+
+## Änderungen
+
+Was sich zwischen den Versionen geändert hat, steht im [CHANGELOG](CHANGELOG.md).
 
 ## 9. Lizenz und Haftung
 

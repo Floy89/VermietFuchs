@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
+    QTreeWidgetItemIterator,
     QVBoxLayout,
     QWidget,
 )
@@ -134,6 +135,11 @@ def describe_readiness(checklist: InvoiceChecklist, today: date) -> str:
     return text
 
 
+#: Breite der Namensspalte im Baum der aggregierten Rechnungen (Pixel).
+_NAME_COLUMN_MIN = 220
+_NAME_COLUMN_MAX = 300
+
+
 def _co2_texts(cost: Money | None, emission: Decimal | None, relevant: bool) -> tuple[str, str]:
     """Anzeige der CO2-Spalten: Werte, "–" bei fehlenden Angaben, leer bei anderen Kostenarten."""
     if not relevant:
@@ -194,7 +200,7 @@ class InvoicesTab(BaseTab):
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(self._build_invoice_drop_area())
         splitter.addWidget(self._build_group_card())
-        splitter.setSizes([700, 700])
+        splitter.setSizes([620, 780])
 
         self._pages = QTabWidget()
         self._pages.addTab(splitter, "Rechnungen")
@@ -308,8 +314,11 @@ class InvoicesTab(BaseTab):
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.setUniformRowHeights(True)
         header = self._tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3, 4, 5):
+        # Die Namensspalte bekommt ihre Breite nach dem Inhalt (siehe _fill_tree) statt "Stretch":
+        # Sonst drücken die Zahlenspalten sie zusammen, bis die Namen nicht mehr zu sehen sind.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        for column in (2, 3, 4, 5):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
         card.body.addWidget(self._tree)
@@ -552,6 +561,16 @@ class InvoicesTab(BaseTab):
             self._tree.addTopLevelItem(top)
 
         self._tree.expandAll()
+        for column, (smallest, largest) in enumerate(((_NAME_COLUMN_MIN, _NAME_COLUMN_MAX), (120, 200))):
+            self._tree.resizeColumnToContents(column)
+            self._tree.setColumnWidth(column, max(smallest, min(self._tree.columnWidth(column) + 12, largest)))
+        # Gekürzte Texte stehen vollständig im Tooltip.
+        iterator = QTreeWidgetItemIterator(self._tree)
+        while (item := iterator.value()) is not None:
+            for column in (0, 1):
+                if not item.toolTip(column):
+                    item.setToolTip(column, item.text(column))
+            iterator += 1
         self._building_tree = False
 
     def _fill_checklist(self, checklist: InvoiceChecklist | None) -> None:

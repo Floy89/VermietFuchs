@@ -70,8 +70,8 @@ class DocumentProfile:
     Vorschlag ein.
 
     Attributes:
-        issuer_key: Erkennungsmerkmal des Absenders, z. B. "ust:DE124978719"
-            (Umsatzsteuer-ID) oder "web:gelsenwasser.de".
+        issuer_key: Erkennungsmerkmal des Absenders, z. B. "ust:DE123456789"
+            (Umsatzsteuer-ID) oder "web:stadtwerke-beispiel.de".
         issuer_name: Name des Absenders, wie er im Beleg steht (zur Anzeige).
         cost_type_id: Zuletzt gewählte Kostenart.
         allocation_key: Zuletzt gewählter Umlageschlüssel.
