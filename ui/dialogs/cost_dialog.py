@@ -30,7 +30,7 @@ from models.cost import (
     Cost,
 )
 from models.cost_type import CostType
-from models.enums import AllocationKey
+from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
 from models.receipt import ReceiptSuggestion
 from models.tenant import Tenant
@@ -129,9 +129,12 @@ class CostDialog(FormDialog):
         preselected_type_id: int | None = None,
         attachments: AttachmentService | None = None,
         attachment_paths: Sequence[Path] = (),
+        vat_lookup: Callable[[int], Decimal | None] | None = None,
     ) -> None:
         """
         Args:
+            vat_lookup: Liefert zu einer Kostenart den Umsatzsteuersatz, der bei
+                einer früheren Rechnung eingetragen wurde (Vorschlag im Split-Dialog).
             attachments: Service der Belege. Ist er angegeben, lassen sich
                 PDFs und Fotos an die Rechnung hängen (auch per Drag-and-drop).
             attachment_paths: Dateien, die gleich als Belege vorgemerkt werden
@@ -157,6 +160,7 @@ class CostDialog(FormDialog):
         self._cost = cost
         self._receipt_scan = receipt_scan
         self._cost_types = list(cost_types)
+        self._vat_lookup = vat_lookup
         # quick_status(): sofortige Antwort - das Öffnen des Dialogs wartet nicht auf Ollama.
         self._scan_available = receipt_scan is not None and receipt_scan.quick_status().available
         self._attachments_editor: AttachmentsEditor | None = None
@@ -419,6 +423,7 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
             self._unit_edit.text().strip(),
             self._splits,
             self,
+            default_vat=self._default_vat(),
         )
         if dialog.exec():
             self._splits = dialog.splits
@@ -429,6 +434,22 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
             if dialog.invoice_consumption != self._entered_consumption():
                 self._consumption_spin.set_decimal(dialog.invoice_consumption or Decimal(0))
             self._update_splits_label()
+
+    def _default_vat(self) -> Decimal:
+        """Vorschlag für den Umsatzsteuersatz im Split-Dialog.
+
+        Am zuverlässigsten ist der Satz, der bei einer früheren Rechnung derselben
+        Kostenart eingetragen wurde. Ohne eine solche gilt: Trinkwasser 7 %,
+        alles andere (Gas, Strom, Fernwärme, Dienstleistungen) 19 %.
+        """
+        cost_type = self._selected_type()
+        if cost_type is not None and cost_type.id is not None and self._vat_lookup is not None:
+            remembered = self._vat_lookup(cost_type.id)
+            if remembered is not None:
+                return remembered
+        if cost_type is not None and cost_type.meter_type is MeterType.COLD_WATER:
+            return Decimal(7)
+        return Decimal(19)
 
     def _update_splits_label(self) -> None:
         """Zeigt, ob und wie viele Splits hinterlegt sind."""

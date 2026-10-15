@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
@@ -705,12 +706,26 @@ class InvoicesTab(BaseTab):
                 preselected_type_id=preselected_type_id,
                 attachments=self._context.attachments,
                 attachment_paths=attachment_paths or (),
+                vat_lookup=lambda type_id: self._last_vat(property_id, type_id),
             )
         if dialog is None:
             return
         dialog.duplicate_requested.connect(self._open_duplicate)
         if dialog.exec():
             self._on_property_changed()
+
+    def _last_vat(self, property_id: int, cost_type_id: int) -> Decimal | None:
+        """Der Umsatzsteuersatz der jüngsten Rechnung dieser Kostenart, bei der einer eingetragen ist."""
+        invoices = sorted(
+            (c for c in self._context.costs.list_costs(property_id) if c.cost_type.id == cost_type_id),
+            key=lambda c: c.period.end,
+            reverse=True,
+        )
+        for invoice in invoices:
+            for split in invoice.splits:
+                if split.calculation is not None and split.calculation.vat_percent is not None:
+                    return split.calculation.vat_percent
+        return None
 
     def _on_receipts_dropped(self, files: list[Path]) -> None:
         """Auf die Rechnungsliste gezogene Dateien: neue Rechnung mit diesen Belegen."""

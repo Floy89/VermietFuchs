@@ -48,6 +48,8 @@ from utils.formatters import format_money, format_period, format_quantity
 #: Preise werden von Versorgern mit bis zu acht Nachkommastellen angegeben.
 _PRICE_DECIMALS = 8
 _DEFAULT_VAT = Decimal(19)
+#: Spalten, die nur für die Umrechnung von Gasvolumen in kWh gebraucht werden.
+_VOLUME_COLUMNS = (_COL_VOLUME, _COL_CONDITION, _COL_CALORIFIC)
 
 
 def _optional(value: Decimal) -> Decimal | None:
@@ -73,9 +75,17 @@ class SplitsDialog(QDialog):
         unit: str,
         splits: list[InvoiceSplit],
         parent: QWidget | None = None,
+        show_volume: bool | None = None,
+        default_vat: Decimal = _DEFAULT_VAT,
     ) -> None:
         """
         Args:
+            show_volume: Spalten für Volumen, Zustandszahl und Brennwert zeigen
+                (Gas: m³ -> kWh). ``None`` = nur, wenn die Rechnung in kWh
+                abgerechnet wird oder ein Split schon solche Angaben hat.
+                Bei Wasser, Strom usw. stören sie nur.
+            default_vat: Vorgeschlagener Umsatzsteuersatz, solange kein Split
+                einen eigenen hat (Trinkwasser 7 %, Gas und Strom 19 %).
             invoice_period: Rechnungszeitraum - Splits müssen darin liegen.
             invoice_amount: Gesamtbetrag der Rechnung (Soll der Split-Summe);
                 0, wenn er sich erst aus der Berechnung ergeben soll.
@@ -86,6 +96,13 @@ class SplitsDialog(QDialog):
         super().__init__(parent)
         self._period = invoice_period
         self._unit = unit
+        if show_volume is None:
+            has_volume = any(
+                s.calculation is not None and s.calculation.volume is not None for s in splits
+            )
+            show_volume = has_volume or unit.strip().casefold() == "kwh"
+        self._show_volume = show_volume
+        self._default_vat = default_vat
         self._updating = False
         #: Ungerundete Summe der aus Preisen berechneten Beträge (nur wenn alle Zeilen berechnet sind).
         self._computed_total: Decimal | None = None
@@ -129,12 +146,21 @@ class SplitsDialog(QDialog):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        for column in _VOLUME_COLUMNS:
+            self._table.setColumnHidden(column, not self._show_volume)
+        if not self._show_volume:
+            self.resize(1180, 560)
         layout.addWidget(self._table, 1)
+        volume_text = (
+            "der Verbrauch aus Volumen × Zustandszahl × Brennwert (auf ganze Einheiten gerundet), "
+            if self._show_volume
+            else ""
+        )
         layout.addWidget(
             muted_label(
-                "Grau = berechnet: der Verbrauch aus Volumen × Zustandszahl × Brennwert (auf ganze Einheiten "
-                "gerundet), der Betrag aus (Verbrauch × Arbeitspreis + Grundpreis × Tage/Jahr) × (1 + USt). "
-                "Felder leer lassen (0), um Verbrauch bzw. Betrag selbst einzutragen."
+                f"Grau = berechnet: {volume_text}der Betrag aus (Verbrauch × Arbeitspreis + Grundpreis × Tage "
+                "des Abschnitts / Tage des Jahres) × (1 + USt). Preisfelder leer lassen (0), um den Betrag "
+                "selbst einzutragen."
             )
         )
 
@@ -185,8 +211,9 @@ class SplitsDialog(QDialog):
             self._working_price_spin.set_decimal(priced.working_price or Decimal(0))
             self._base_price_spin.set_decimal(priced.base_price or Decimal(0))
         self._vat_spin.set_decimal(
-            with_vat.vat_percent if with_vat and with_vat.vat_percent is not None else _DEFAULT_VAT
+            with_vat.vat_percent if with_vat and with_vat.vat_percent is not None else self._default_vat
         )
+        self._vat_spin.setToolTip("Laut Rechnung - z. B. Trinkwasser 7 %, Gas, Strom und Fernwärme 19 %")
         for spin in (self._working_price_spin, self._base_price_spin):
             spin.setMinimumWidth(150)
         apply_button = make_button(
@@ -220,8 +247,14 @@ class SplitsDialog(QDialog):
             f"Rechnung {format_period(self._period)}: {amount}{total_consumption}\n"
             "Tragen Sie die Abschnitte laut Rechnung ein (z. B. je Ablesetermin). Mit Splits rechnet das "
             "Programm jeden Abschnitt dem Jahr zu, in dem er liegt. Ohne Splits wird die Rechnung "
-            "gleichmäßig nach Tagen verteilt. Nennt die Rechnung nur Volumen und Preise, tragen Sie diese "
-            "ein - Verbrauch und Betrag je Abschnitt werden berechnet."
+            "gleichmäßig nach Tagen verteilt. "
+            + (
+                "Nennt die Rechnung nur Volumen und Preise, tragen Sie diese ein - Verbrauch und Betrag je "
+                "Abschnitt werden berechnet."
+                if self._show_volume
+                else "Nennt die Rechnung Preise statt fertiger Beträge je Abschnitt, tragen Sie die Preise ein - "
+                "der Betrag je Abschnitt wird berechnet."
+            )
         )
 
     # ------------------------------------------------------------------ #
@@ -462,20 +495,25 @@ class SplitsDialog(QDialog):
                 )
 
         error = self._check()
-        gaps = uncovered_periods(splits, self._period) if error is None else []
+        # Nicht abgedeckte Tage immer nennen - auch wenn die Summen (noch) nicht
+        # stimmen: Eine Lücke von einem Tag erklärt oft einen Teil der Differenz.
+        gaps = uncovered_periods(splits, self._period)
+        gap_text = ""
+        if gaps:
+            listed = ", ".join(format_period(gap) for gap in gaps)
+            gap_text = f"\n⚠ Nicht abgedeckt: {listed}. Für diese Tage werden keine Kosten berechnet."
+        if error is not None and computed is not None and not self.invoice_amount.is_zero:
+            error += " Bitte Umsatzsteuersatz, Preise und die Zeiträume der Abschnitte mit der Rechnung vergleichen."
         if error is None and gaps:
             # Summen stimmen, aber nicht alle Tage der Rechnung gehören zu einem
             # Split. Erlaubt, jedoch meist ein Tippfehler im Datum -> hinweisen.
-            listed = ", ".join(format_period(gap) for gap in gaps)
-            self._status.setText(
-                f"✓ {text}\n⚠ Nicht abgedeckt: {listed}. Für diese Tage werden keine Kosten berechnet."
-            )
+            self._status.setText(f"✓ {text}{gap_text}")
             self._status.setStyleSheet(f"color: {styles.color('warning_text')}; font-weight: 600;")
         elif error is None:
             self._status.setText(f"✓ {text}")
             self._status.setStyleSheet(f"color: {styles.color('success')}; font-weight: 600;")
         else:
-            self._status.setText(f"{text}\n{error}")
+            self._status.setText(f"{text}\n{error}{gap_text}")
             self._status.setStyleSheet(f"color: {styles.color('danger')}; font-weight: 600;")
 
     def _accept_if_valid(self) -> None:

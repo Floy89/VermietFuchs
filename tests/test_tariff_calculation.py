@@ -247,3 +247,68 @@ class TestDialog:
         assert not dialog._amount_spin(0).isReadOnly()
         dialog._accept_if_valid()
         assert dialog.splits == manual  # keine Rechengrundlagen -> calculation bleibt None
+
+
+class TestWaterInvoice:
+    """Trinkwasser: Preis je m³, Grundpreis je Jahr, 7 % Umsatzsteuer - ohne Gasumrechnung.
+
+    Aufbau wie eine echte Wasserrechnung 13.09.2025–30.09.2026 mit Zwischenablesung
+    zum 31.12.2025 (Zahlen erfunden): 290 m³ zu 1,9829 €, Grundpreis 153 € je Jahr.
+    """
+
+    PERIOD = DateRange(date(2025, 9, 13), date(2026, 9, 30))
+    TOTAL = Money.from_decimal("787.08")
+
+    def _splits(self, end_2025: date, vat: str) -> list[InvoiceSplit]:
+        prices = {"working_price": Decimal("1.9829"), "base_price": Decimal("153"), "vat_percent": Decimal(vat)}
+        return [
+            InvoiceSplit(DateRange(date(2025, 9, 13), end_2025), Money.zero(), Decimal("75"), SplitCalculation(**prices)),
+            InvoiceSplit(DateRange(date(2026, 1, 1), date(2026, 9, 30)), Money.zero(), Decimal("215"), SplitCalculation(**prices)),
+        ]
+
+    def test_base_price_is_charged_per_day_and_reproduces_the_invoice(self, qt_app: QApplication) -> None:
+        dialog = SplitsDialog(self.PERIOD, self.TOTAL, Decimal("290"), "m³", self._splits(date(2025, 12, 31), "7"))
+
+        assert dialog._check() is None, dialog._status.text()
+        # 110 Tage 2025 und 273 Tage 2026 - zusammen die 383 Tage der Rechnung.
+        assert [dialog._amount_spin(row).money() for row in range(2)] == [
+            Money.from_decimal("208.47"), Money.from_decimal("578.61"),
+        ]
+
+    def test_wrong_vat_and_a_missing_day_are_reported(self, qt_app: QApplication) -> None:
+        dialog = SplitsDialog(self.PERIOD, self.TOTAL, Decimal("290"), "m³", self._splits(date(2025, 12, 30), "19"))
+
+        status = dialog._status.text()
+        assert dialog._check() is not None
+        assert "Umsatzsteuersatz" in status
+        # Der fehlende 31.12. wird genannt, obwohl die Summe ohnehin nicht stimmt.
+        assert "Nicht abgedeckt: 31.12.2025" in status
+
+    def test_gas_columns_only_where_they_make_sense(self, qt_app: QApplication) -> None:
+        water = SplitsDialog(self.PERIOD, self.TOTAL, Decimal("290"), "m³", [])
+        gas = SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"), "kWh", [])
+        gas_without_unit = SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, None, "", _splits())
+
+        assert all(water._table.isColumnHidden(c) for c in (_COL_VOLUME, _COL_CONDITION, _COL_CALORIFIC))
+        assert not any(gas._table.isColumnHidden(c) for c in (_COL_VOLUME, _COL_CONDITION, _COL_CALORIFIC))
+        # Vorhandene Volumenangaben bleiben sichtbar, auch wenn die Einheit fehlt.
+        assert not gas_without_unit._table.isColumnHidden(_COL_VOLUME)
+
+    def test_vat_suggestion(self, qt_app: QApplication, context: AppContext) -> None:
+        from ui.dialogs.cost_dialog import CostDialog
+
+        types = context.cost_types.list_types()
+        water = context.cost_types.get_by_name("Wasserversorgung")
+        gas = context.cost_types.get_by_name("Brennstoffkosten (Gas/Öl)")
+
+        def dialog_for(cost_type: object, lookup: object = None) -> CostDialog:
+            dialog = CostDialog(context.costs.save_cost, types, [], 1, self.PERIOD, vat_lookup=lookup)  # type: ignore[arg-type]
+            dialog._type_combo.setCurrentIndex(dialog._type_combo.findText(cost_type.name))  # type: ignore[attr-defined]
+            return dialog
+
+        assert dialog_for(water)._default_vat() == Decimal(7)
+        assert dialog_for(gas)._default_vat() == Decimal(19)
+        # Ein bei einer früheren Rechnung eingetragener Satz hat Vorrang.
+        assert dialog_for(water, lambda _type_id: Decimal("0"))._default_vat() == Decimal(0)
+        dialog = SplitsDialog(self.PERIOD, self.TOTAL, Decimal("290"), "m³", [], default_vat=Decimal(7))
+        assert dialog._vat_spin.decimal_value() == Decimal(7)
