@@ -89,8 +89,8 @@ Zählernummer Zeitraum Zählerstand alt Zählerstand neu Ableseart Abrechnungsvo
 Ihr Gesamtverbrauch 39.135 kWh
 Arbeitspreis 01.06.2024 31.05.2025 39.135 kWh 0,0612 EUR/kWh 2.395,06 EUR
 Grundpreis 01.06.2024 31.05.2025 365 Tag(e) 174,00 EUR/Jahr 174,00 EUR
-Umsatzsteuer 01.06.2024 31.05.2025 2.569,08 EUR 19 % 488,13 EUR
-Summe brutto 3.056,85 EUR
+Umsatzsteuer 01.06.2024 31.05.2025 2.569,06 EUR 19 % 488,12 EUR
+Summe brutto 3.057,18 EUR
 """
 
 
@@ -196,13 +196,13 @@ class TestReading:
         draft = read_document(GAS, NAMES)
 
         assert draft.period == DateRange(date(2024, 6, 1), date(2025, 5, 31))
-        assert draft.amount == Money.from_decimal("3056.85")
+        assert draft.amount == Money.from_decimal("3057.18")
         assert (draft.consumption, draft.consumption_unit) == (Decimal("39135"), "kWh")
         assert (draft.working_price, draft.base_price_per_year, draft.vat_percent) == (
             Decimal("0.0612"), Decimal("174.00"), Decimal("19"),
         )
         assert [s.consumption for s in draft.splits] == [Decimal("1444"), Decimal("3293"), Decimal("12988"), Decimal("21410")]
-        assert sum((s.amount for s in draft.splits), Money.zero()) == Money.from_decimal("3056.85")
+        assert sum((s.amount for s in draft.splits), Money.zero()) == Money.from_decimal("3057.18")
         assert draft.splits[2].calculation is not None and draft.splits[2].calculation.volume == Decimal("1187")
 
     def test_gas_invoice_with_prices_per_period(self) -> None:
@@ -230,7 +230,7 @@ class TestReading:
         # und darunter ein Bruttopreis, der nicht als Grundpreis gelten darf.
         scanned = (
             GAS.replace("174,00 EUR/Jahr", "174,00 ELJR/J-ahr")
-            .replace("2.569,08 EUR 19 % 488,13 EUR", "2.569,08 EUR 488,13 EUR")
+            .replace("2.569,06 EUR 19 % 488,12 EUR", "2.569,06 EUR 488,12 EUR")
             + "Ihr aktueller Arbeitspreis beträgt 9,90 ct/kWh (brutto) und Ihr Grundpreis 240,00 EUR/Jahr (brutto).\n"
         )
         expected = read_document(GAS, NAMES)
@@ -240,6 +240,22 @@ class TestReading:
             Decimal("0.0612"), Decimal("174.00"), Decimal("19"),
         )
         assert [s.amount for s in draft.splits] == [s.amount for s in expected.splits]
+
+    def test_price_change_on_continuation_line(self) -> None:
+        text = WATER.replace(
+            "Mengenpreis 13.09.25 - 30.09.26 290 m³ 1,9829 Euro / m³ 575,04 Euro\n",
+            "Mengenpreis 13.09.25 - 31.12.25 75 m³ 1,938 Euro / m³ 145,35 Euro\n"
+            "01.01.26 - 30.09.26 215 m³ 1,9829 Euro / m³ 426,32 Euro\n",
+        ).replace("Summe 735,59 Euro", "Summe 732,22 Euro").replace(
+            "Umsatzsteuer 7 % von 735,59 Euro 51,49 Euro\nRechnungsbetrag 787,08 Euro",
+            "Umsatzsteuer 7 % von 732,22 Euro 51,26 Euro\nRechnungsbetrag 783,48 Euro",
+        )
+        draft = read_document(text, NAMES)
+
+        assert [s.calculation.working_price for s in draft.splits] == [Decimal("1.938"), Decimal("1.9829")]  # type: ignore[union-attr]
+        # Grundpreis 160,55 € nach Tagen (110/383, 273/383) aufgeteilt, wie die Rechnung ihn ausweist.
+        assert [s.amount for s in draft.splits] == [Money.from_decimal("204.86"), Money.from_decimal("578.62")]
+        assert sum((s.amount for s in draft.splits), Money.zero()) == draft.amount
 
     def test_no_splits_without_prices(self) -> None:
         text = "\n".join(line for line in WATER.splitlines() if "preis" not in line.lower())

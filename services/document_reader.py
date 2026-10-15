@@ -407,8 +407,16 @@ def working_prices(lines: Sequence[str]) -> list[PricedPeriod]:
     "AP"; Cent-Angaben werden in Euro umgerechnet.
     """
     result: list[PricedPeriod] = []
+    previous_was_price = False
     for line in lines:
-        if not re.search(r"mengenpreis|arbeitspreis|verbrauchspreis|\bAP\b", line, re.I if "AP" not in line else 0):
+        is_price_line = bool(
+            re.search(r"mengenpreis|arbeitspreis|verbrauchspreis|\bAP\b", line, re.I if "AP" not in line else 0)
+        )
+        # Fortsetzungszeile ohne Stichwort direkt darunter: "01.01.25 - 12.09.25 200 m³ 1,9829 Euro / m³ …"
+        if not is_price_line and previous_was_price and re.match(rf"\s*{_DATE}\s*[-–]?\s*{_DATE}", line):
+            is_price_line = True
+        previous_was_price = is_price_line
+        if not is_price_line:
             continue
         if "brutto" in line.lower():  # "Ihr aktueller Arbeitspreis beträgt 11,10 ct/kWh (brutto)" - gerechnet wird netto
             continue
@@ -429,8 +437,13 @@ def base_prices(lines: Sequence[str]) -> list[PricedPeriod]:
     Erkennt "Grundpreis" und die Abkürzung "GP".
     """
     result: list[PricedPeriod] = []
+    previous_was_price = False
     for line in lines:
-        if "grundpreis" not in line.lower() and not re.search(r"\bGP\b", line):
+        is_price_line = "grundpreis" in line.lower() or bool(re.search(r"\bGP\b", line))
+        if not is_price_line and previous_was_price and re.match(rf"\s*{_DATE}\s*[-–]?\s*{_DATE}", line):
+            is_price_line = True
+        previous_was_price = is_price_line
+        if not is_price_line:
             continue
         if "brutto" in line.lower():
             continue
@@ -472,9 +485,35 @@ def price_for(period: DateRange, prices: Sequence[PricedPeriod], fallback: Decim
     return best[1] if best else fallback
 
 
-def stated_net(period: DateRange, prices: Sequence[PricedPeriod]) -> Decimal | None:
-    """Der Nettobetrag, den die Rechnung für genau diesen Zeitraum in einer Preiszeile ausweist."""
-    return next((net for valid, _value, net in prices if valid == period and net is not None), None)
+def allocate_stated_nets(
+    periods: Sequence[DateRange], weights: Sequence[Decimal], prices: Sequence[PricedPeriod]
+) -> list[Decimal | None]:
+    """Verteilt die in Preiszeilen ausgewiesenen Nettobeträge auf die Splits.
+
+    Eine Preiszeile kann mehrere Splits umfassen ("Mengenpreis 01.01.25 -
+    12.09.25 200 m³ … 396,58 Euro" für zwei Ablesezeiträume). Ihr Betrag wird
+    dann im Verhältnis der ``weights`` (Verbrauch beim Arbeitspreis, Tage beim
+    Grundpreis) centgenau aufgeteilt - so rechnet der Versorger, auch bei
+    Eigenheiten wie "153,00 Euro / 365 Tage" im Schaltjahr.
+
+    Returns:
+        Je Split den Nettobetrag - oder ``None``, wo keine Preiszeile ihn mit
+        Betrag vollständig abdeckt (dann wird aus dem Preis gerechnet).
+    """
+    result: list[Decimal | None] = [None] * len(periods)
+    for valid, _value, net in prices:
+        if valid is None or net is None:
+            continue
+        inside = [i for i, period in enumerate(periods) if valid.start <= period.start and period.end <= valid.end]
+        # Nur wenn die Splits den Zeitraum der Zeile genau ausfüllen - sonst gehört ein Teil woandershin.
+        if not inside or sum(periods[i].days for i in inside) != valid.days:
+            continue
+        shares = [weights[i] for i in inside]
+        if sum(shares, Decimal(0)) <= 0:
+            continue
+        for i, part in zip(inside, Money.from_decimal(net).allocate(shares)):
+            result[i] = part.amount
+    return result
 
 
 def find_cost_type(text: str, cost_type_names: Sequence[str]) -> str:
@@ -757,13 +796,16 @@ def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSpl
     if len(pieces) < 2:
         return []
 
+    periods = [period for period, _used, _calc in pieces]
+    work_nets = allocate_stated_nets(periods, [used for _p, used, _c in pieces], work)
+    base_nets = allocate_stated_nets(periods, [Decimal(period.days) for period in periods], base)
     exact = [
         _invoice_style_gross(
             calc, period, used,
-            stated_net(period, work) if calc.working_price else None,
-            stated_net(period, base) if calc.base_price else None,
+            work_nets[i] if calc.working_price else None,
+            base_nets[i] if calc.base_price else None,
         )
-        for period, used, calc in pieces
+        for i, (period, used, calc) in enumerate(pieces)
     ]
     if any(value is None for value in exact):
         return []
