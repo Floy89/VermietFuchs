@@ -183,6 +183,11 @@ class TestReading:
             (DateRange(date(2026, 1, 1), date(2026, 9, 30)), Decimal("215"), Money.from_decimal("578.61")),
         ]
 
+    def test_base_price_per_365_days_is_recognised(self) -> None:
+        # "153,00 Euro / 365 Tage": starr 1/365 je Tag - der Split-Dialog bekommt den Haken gesetzt.
+        draft = read_document(WATER, NAMES)
+        assert {s.calculation.base_price_days for s in draft.splits} == {Decimal(365)}  # type: ignore[union-attr]
+
     def test_same_page_from_text_recognition(self) -> None:
         draft = read_document(WATER_OCR, NAMES, source="ocr")
 
@@ -219,11 +224,14 @@ class TestReading:
             (Decimal("24109"), Money.from_decimal("2375.80"), Decimal("0.0797")),
         ]
         assert draft.splits[0].calculation.calorific_value == Decimal("11.630")  # type: ignore[union-attr]
+        assert draft.splits[0].calculation.base_price_days is None  # type: ignore[union-attr]  # "€/Jahr": kalendergenau
 
     def test_stated_line_amounts_beat_misread_prices(self) -> None:
         # Die Texterkennung hat "151,20" als "151" gelesen; die Zeilenbeträge stimmen aber.
         draft = read_document(GAS_SPLIT_PRICES.format(base="151"), NAMES, source="ocr")
         assert [s.amount for s in draft.splits] == [Money.from_decimal("1754.71"), Money.from_decimal("2375.80")]
+        # Der Preis selbst wird repariert - so rechnet auch der Split-Dialog später dasselbe.
+        assert [s.calculation.base_price for s in draft.splits] == [Decimal("151.20"), Decimal("151.20")]  # type: ignore[union-attr]
 
     def test_gas_invoice_from_text_recognition(self) -> None:
         # Typische Lesefehler: "EUR/Jahr" als "ELJR/J-ahr", Prozentzeichen der Steuer verschluckt -

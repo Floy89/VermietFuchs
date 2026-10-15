@@ -79,7 +79,7 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-355 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+359 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
 Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
@@ -357,9 +357,14 @@ Schlüssel, Beschreibung und die gemerkten Fundstellen (z. B. *Rechnungsbetrag: 
 Fundstellen oder ganze Absender vergessen - Rechnungen und Belege bleiben davon unberührt.
 
 Ändern sich Preise im Abrechnungszeitraum (z. B. zum Jahreswechsel), bekommt jeder Split den
-Preis seines Zeitraums. Weist die Rechnung je Abschnitt eigene Nettobeträge aus, werden diese
-übernommen - so stimmen die Splits auf den Cent, auch wenn die Texterkennung einen Preis
-verstümmelt hat.
+Preis seines Zeitraums. Die Splits werden so berechnet wie im Split-Dialog; die Nettobeträge der
+Preiszeilen dienen zur Kontrolle. Passt ein gelesener Preis nicht dazu (Texterkennung: "151"
+statt "151,20"), wird er korrigiert.
+
+**Grundpreis im Schaltjahr:** Manche Versorger rechnen den Jahres-Grundpreis kalendergenau
+(2024: 1/366 je Tag), andere starr mit 1/365 ("153,00 Euro / 365 Tage"). Der Split-Dialog hat
+dafür den Haken *Grundpreis je 365 Tage (auch im Schaltjahr)*; beim Auslesen wird er anhand der
+Rechnung gesetzt. Arbeits- und Grundpreisanteil werden wie auf Rechnungen je auf Cent gerundet.
 
 Grenzen: Die Regeln sind auf deutsche Versorger- und Gebührenrechnungen zugeschnitten. Bei
 schlechten Fotos liest die Texterkennung Ziffern falsch - darum werden die Werte nur

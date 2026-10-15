@@ -15,6 +15,7 @@ from decimal import Decimal
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -159,8 +160,8 @@ class SplitsDialog(QDialog):
         layout.addWidget(
             muted_label(
                 f"Grau = berechnet: {volume_text}der Betrag aus (Verbrauch × Arbeitspreis + Grundpreis × Tage "
-                "des Abschnitts / Tage des Jahres) × (1 + USt). Preisfelder leer lassen (0), um den Betrag "
-                "selbst einzutragen."
+                "des Abschnitts / Tage des Jahres) × (1 + USt), beide Preisanteile wie auf Rechnungen je auf "
+                "Cent gerundet. Preisfelder leer lassen (0), um den Betrag selbst einzutragen."
             )
         )
 
@@ -221,6 +222,15 @@ class SplitsDialog(QDialog):
         )
         apply_button.clicked.connect(self._apply_prices_to_all)
         self._vat_spin.valueChanged.connect(lambda *_: self._recalculate())
+        self._fixed_days_check = QCheckBox("Grundpreis je 365 Tage (auch im Schaltjahr)")
+        self._fixed_days_check.setToolTip(
+            "Anhaken, wenn die Rechnung den Grundpreis als \"… Euro / 365 Tage\" angibt: Dann zählt jeder Tag "
+            "1/365, auch 2024 oder 2028. Ohne Haken wird kalendergenau gerechnet (Schaltjahr 1/366 je Tag)."
+        )
+        self._fixed_days_check.setChecked(
+            any(s.calculation is not None and s.calculation.base_price_days for s in splits)
+        )
+        self._fixed_days_check.toggled.connect(lambda *_: self._recalculate())
 
         bar = QHBoxLayout()
         bar.setSpacing(8)
@@ -232,6 +242,7 @@ class SplitsDialog(QDialog):
         ):
             bar.addWidget(muted_label(caption))
             bar.addWidget(widget)
+        bar.addWidget(self._fixed_days_check)
         bar.addWidget(apply_button)
         bar.addStretch(1)
         return bar
@@ -352,6 +363,7 @@ class SplitsDialog(QDialog):
     def _row_calculation(self, row: int) -> SplitCalculation:
         """Die Rechengrundlagen einer Zeile (leere Felder als ``None``)."""
         has_prices = self._spin(row, _COL_WORKING_PRICE).value() > 0 or self._spin(row, _COL_BASE_PRICE).value() > 0
+        has_base_price = self._spin(row, _COL_BASE_PRICE).value() > 0
         return SplitCalculation(
             volume=_optional(self._spin(row, _COL_VOLUME).decimal_value()),
             condition_number=_optional(self._spin(row, _COL_CONDITION).decimal_value()),
@@ -360,6 +372,7 @@ class SplitsDialog(QDialog):
             base_price=_optional(self._spin(row, _COL_BASE_PRICE).decimal_value()),
             # Die Umsatzsteuer gilt für die ganze Rechnung, zählt aber nur mit Preisen.
             vat_percent=self._vat_spin.decimal_value() if has_prices else None,
+            base_price_days=Decimal(365) if has_base_price and self._fixed_days_check.isChecked() else None,
         )
 
     def _read_splits(self) -> list[InvoiceSplit]:

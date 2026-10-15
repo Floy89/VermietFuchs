@@ -40,8 +40,8 @@ INVOICE_AMOUNT = Money.from_decimal("3056.85")
 ROWS = [
     (date(2024, 6, 1), date(2024, 6, 30), "132", "0.9581", "11.420", "1444", "122.13"),
     (date(2024, 7, 1), date(2024, 9, 30), "301", "0.9581", "11.420", "3293", "291.87"),
-    (date(2024, 10, 1), date(2024, 12, 31), "1187", "0.9581", "11.420", "12988", "997.94"),
-    (date(2025, 1, 1), date(2025, 5, 31), "1954", "0.9581", "11.436", "21410", "1644.91"),
+    (date(2024, 10, 1), date(2024, 12, 31), "1187", "0.9581", "11.420", "12988", "997.95"),
+    (date(2025, 1, 1), date(2025, 5, 31), "1954", "0.9581", "11.436", "21410", "1644.90"),
 ]
 
 
@@ -115,6 +115,53 @@ class TestCalculation:
         assert working_only.gross_cost(year, Decimal("100")) == Decimal("250.00")
 
 
+class TestBasePricePer365Days:
+    """Manche Versorger rechnen den Grundpreis starr mit 1/365 je Tag - auch im Schaltjahr."""
+
+    #: Gelsenwasser 2024/25: "153,00 Euro / 365 Tage", Abschnitt 14.09.-31.12.2024 (109 Tage).
+    PERIOD = DateRange(date(2024, 9, 14), date(2024, 12, 31))
+
+    def test_calendar_exact_and_fixed_days(self) -> None:
+        calendar = SplitCalculation(working_price=Decimal("1.938"), base_price=Decimal("153.00"), vat_percent=Decimal(7))
+        fixed = SplitCalculation(
+            working_price=Decimal("1.938"), base_price=Decimal("153.00"), vat_percent=Decimal(7),
+            base_price_days=Decimal(365),
+        )
+        assert calendar.net_parts(self.PERIOD, Decimal(85)) == (Decimal("164.73"), Decimal("45.57"))  # 109/366
+        assert fixed.net_parts(self.PERIOD, Decimal(85)) == (Decimal("164.73"), Decimal("45.69"))  # 109/365 wie auf der Rechnung
+        assert fit_amounts([fixed.gross_cost(self.PERIOD, Decimal(85)) or Decimal(0)], None) == [Money.from_decimal("225.15")]
+
+    def test_setting_is_saved_with_the_split(self, context: AppContext) -> None:
+        house = context.properties.save_property(Property(name="Wasserhaus", address="Weg 9, 12345 Ort"))
+        assert house.id is not None
+        calc = SplitCalculation(working_price=Decimal("1.938"), base_price=Decimal("153"), base_price_days=Decimal(365))
+        context.costs.save_cost(
+            Cost(house.id, context.cost_types.get_by_name("Wasserversorgung"), Money.from_decimal("225.15"), self.PERIOD,
+                 AllocationKey.CONSUMPTION, consumption=Decimal(85), consumption_unit="m³",
+                 splits=[InvoiceSplit(self.PERIOD, Money.from_decimal("225.15"), Decimal(85), calc)])
+        )
+        (stored,) = context.costs.list_costs(house.id)
+        assert stored.splits[0].calculation is not None and stored.splits[0].calculation.base_price_days == Decimal(365)
+
+    def test_checkbox_in_the_dialog(self, qt_app: QApplication) -> None:
+        split = InvoiceSplit(
+            self.PERIOD, Money.zero(), Decimal(85),
+            SplitCalculation(working_price=Decimal("1.938"), base_price=Decimal("153.00"), vat_percent=Decimal(7)),
+        )
+        dialog = SplitsDialog(self.PERIOD, Money.from_decimal("225.15"), Decimal(85), "m³", [split])
+        assert not dialog._fixed_days_check.isChecked()
+        assert dialog._amount_spin(0).money() == Money.from_decimal("225.02")  # kalendergenau: 13 Cent weniger
+
+        dialog._fixed_days_check.setChecked(True)
+
+        assert dialog._amount_spin(0).money() == Money.from_decimal("225.15")
+        assert dialog._check() is None
+        assert dialog._read_splits()[0].calculation.base_price_days == Decimal(365)  # type: ignore[union-attr]
+        # Beim erneuten Öffnen ist der Haken wieder gesetzt.
+        again = SplitsDialog(self.PERIOD, Money.from_decimal("225.15"), Decimal(85), "m³", dialog._read_splits())
+        assert again._fixed_days_check.isChecked()
+
+
 class TestInBilling:
     def _invoice(self, context: AppContext) -> Cost:
         house = context.properties.save_property(Property(name="Gashaus", address="Am Brenner 1, 12345 Heizstadt"))
@@ -140,8 +187,8 @@ class TestInBilling:
         part_2024 = invoice.prorate(DateRange.for_year(2024))
 
         assert part_2025 is not None and part_2024 is not None
-        assert (part_2025.amount, part_2025.consumption) == (Money.from_decimal("1644.91"), Decimal("21410"))
-        assert (part_2024.amount, part_2024.consumption) == (Money.from_decimal("1411.94"), Decimal("17725"))
+        assert (part_2025.amount, part_2025.consumption) == (Money.from_decimal("1644.90"), Decimal("21410"))
+        assert (part_2024.amount, part_2024.consumption) == (Money.from_decimal("1411.95"), Decimal("17725"))
         assert part_2024.amount + part_2025.amount == INVOICE_AMOUNT
 
     def test_calculation_inputs_survive_saving(self, context: AppContext) -> None:
@@ -221,9 +268,9 @@ class TestDialog:
         dialog._adopt_sums()
 
         assert dialog._check() is None, dialog._status.text()
-        # Ohne Rechnungsbetrag wird jede Zeile für sich gerundet - das ergibt hier
-        # einen Cent mehr, als der Versorger (mit anderer Rundung) ausweist.
-        assert dialog.invoice_amount == INVOICE_AMOUNT + Money(1)
+        # Ohne Rechnungsbetrag wird jede Zeile für sich gerundet - mit Arbeits- und
+        # Grundpreisanteil je auf Cent (wie beim Versorger) trifft das die Rechnung genau.
+        assert dialog.invoice_amount == INVOICE_AMOUNT
         assert dialog.invoice_consumption == Decimal("39135")
 
     def test_existing_calculation_is_shown_again(self, qt_app: QApplication) -> None:

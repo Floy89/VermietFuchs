@@ -26,6 +26,7 @@ from models.value_objects import DateRange, Money
 #: der Rechnungsbetrag. Versorger runden jede Preiszeile einzeln, die Anwendung
 #: erst am Ende - das ergibt Differenzen von wenigen Cent.
 ROUNDING_TOLERANCE: Final[Money] = Money(10)
+_CENT: Final[Decimal] = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,9 @@ class SplitCalculation:
         working_price: Arbeitspreis netto je Verbrauchseinheit (z. B. €/kWh).
         base_price: Grundpreis netto je Jahr.
         vat_percent: Umsatzsteuersatz in Prozent.
+        base_price_days: Auf wie viele Tage sich der Grundpreis bezieht, wenn der
+            Versorger ihn starr je Tag rechnet ("153,00 Euro / 365 Tage": auch im
+            Schaltjahr 1/365 je Tag). ``None`` = kalendergenau (1/365 bzw. 1/366).
     """
 
     volume: Decimal | None = None
@@ -49,6 +53,7 @@ class SplitCalculation:
     working_price: Decimal | None = None
     base_price: Decimal | None = None
     vat_percent: Decimal | None = None
+    base_price_days: Decimal | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -81,22 +86,37 @@ class SplitCalculation:
         exact = self.volume * self.condition_number * self.calorific_value
         return exact.quantize(Decimal(1), rounding=ROUND_HALF_UP)
 
+    def base_fraction(self, period: DateRange) -> Decimal:
+        """Anteil des Jahres-Grundpreises für den Zeitraum - starr je Tag oder kalendergenau."""
+        if self.base_price_days:
+            return Decimal(period.days) / self.base_price_days
+        return year_fraction(period)
+
+    def net_parts(self, period: DateRange, consumption: Decimal | None) -> tuple[Decimal, Decimal]:
+        """Nettobeträge der Arbeitspreis- und der Grundpreiszeile, je auf Cent gerundet.
+
+        So stehen sie auf der Rechnung: Versorger runden jede Preiszeile für sich.
+        """
+        work = (consumption or Decimal(0)) * (self.working_price or Decimal(0))
+        base = (self.base_price or Decimal(0)) * self.base_fraction(period)
+        return work.quantize(_CENT, rounding=ROUND_HALF_UP), base.quantize(_CENT, rounding=ROUND_HALF_UP)
+
     def gross_cost(self, period: DateRange, consumption: Decimal | None) -> Decimal | None:
-        """Kosten des Abschnitts inklusive Umsatzsteuer - *ungerundet*.
+        """Kosten des Abschnitts inklusive Umsatzsteuer.
 
-        ``(Verbrauch × Arbeitspreis + Grundpreis × Jahresanteil) × (1 + USt)``
-
-        Gerundet wird erst über alle Abschnitte gemeinsam (siehe
-        :func:`fit_amounts`), damit beim Summieren kein Cent entsteht oder fehlt.
+        ``(Verbrauch × Arbeitspreis + Grundpreis × Jahresanteil) × (1 + USt)`` -
+        Arbeits- und Grundpreisanteil werden wie auf der Rechnung je auf Cent
+        gerundet, der Bruttobetrag noch nicht: Das geschieht über alle
+        Abschnitte gemeinsam (siehe :func:`fit_amounts`), damit beim Summieren
+        kein Cent entsteht oder fehlt.
 
         Returns:
             Den Betrag oder ``None``, wenn keine Preise angegeben sind.
         """
         if not self.has_prices:
             return None
-        net = (consumption or Decimal(0)) * (self.working_price or Decimal(0))
-        net += (self.base_price or Decimal(0)) * year_fraction(period)
-        return net * (Decimal(1) + (self.vat_percent or Decimal(0)) / Decimal(100))
+        work, base = self.net_parts(period, consumption)
+        return (work + base) * (Decimal(1) + (self.vat_percent or Decimal(0)) / Decimal(100))
 
 
 def year_fraction(period: DateRange) -> Decimal:

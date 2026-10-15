@@ -21,12 +21,13 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
+from dataclasses import replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Sequence
 
 from models.cost import InvoiceSplit
 from models.document import DocumentDraft, DocumentProfile, FieldAnchor
-from models.tariff import SplitCalculation, fit_amounts, year_fraction
+from models.tariff import SplitCalculation, fit_amounts
 from models.value_objects import DateRange, Money
 from utils.numbers import to_decimal
 
@@ -467,6 +468,19 @@ def find_working_price(lines: Sequence[str]) -> Decimal | None:
     return prices[0][1] if prices else None
 
 
+def base_price_per_fixed_days(lines: Sequence[str]) -> bool:
+    """``True``, wenn der Grundpreis starr je Tag angegeben ist ("153,00 Euro / 365 Tage").
+
+    Solche Versorger rechnen auch im Schaltjahr mit 1/365 je Tag; ein Preis
+    "… EUR/Jahr" wird dagegen kalendergenau auf die Tage verteilt.
+    """
+    return any(
+        ("grundpreis" in line.lower() or re.search(r"\bGP\b", line))
+        and re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*\d+\s*tag", line, re.I)
+        for line in lines
+    )
+
+
 def find_base_price(lines: Sequence[str]) -> Decimal | None:
     """Der (erste) Grundpreis netto je Jahr."""
     prices = base_prices(lines)
@@ -485,35 +499,38 @@ def price_for(period: DateRange, prices: Sequence[PricedPeriod], fallback: Decim
     return best[1] if best else fallback
 
 
-def allocate_stated_nets(
-    periods: Sequence[DateRange], weights: Sequence[Decimal], prices: Sequence[PricedPeriod]
-) -> list[Decimal | None]:
-    """Verteilt die in Preiszeilen ausgewiesenen Nettobeträge auf die Splits.
+def repair_price(net: Decimal, weights: Sequence[Decimal], price: Decimal) -> Decimal | None:
+    """Der Preis, der den ausgewiesenen Nettobetrag einer Preiszeile genau ergibt - oder ``None``.
 
-    Eine Preiszeile kann mehrere Splits umfassen ("Mengenpreis 01.01.25 -
-    12.09.25 200 m³ … 396,58 Euro" für zwei Ablesezeiträume). Ihr Betrag wird
-    dann im Verhältnis der ``weights`` (Verbrauch beim Arbeitspreis, Tage beim
-    Grundpreis) centgenau aufgeteilt - so rechnet der Versorger, auch bei
-    Eigenheiten wie "153,00 Euro / 365 Tage" im Schaltjahr.
+    Liest die Texterkennung "151 €/Jahr" statt "151,20 €/Jahr", passt der
+    berechnete Betrag nicht zu den "74,56 €" am Zeilenende. Gesucht wird der
+    Preis mit möglichst wenigen Nachkommastellen, der - je Split auf Cent
+    gerundet - genau diesen Betrag ergibt und nah am gelesenen Preis liegt.
 
-    Returns:
-        Je Split den Nettobetrag - oder ``None``, wo keine Preiszeile ihn mit
-        Betrag vollständig abdeckt (dann wird aus dem Preis gerechnet).
+    Args:
+        net: Nettobetrag der Preiszeile.
+        weights: Je Split die Menge (Arbeitspreis) bzw. der Jahresanteil (Grundpreis).
+        price: Der gelesene Preis.
     """
-    result: list[Decimal | None] = [None] * len(periods)
-    for valid, _value, net in prices:
-        if valid is None or net is None:
-            continue
-        inside = [i for i, period in enumerate(periods) if valid.start <= period.start and period.end <= valid.end]
-        # Nur wenn die Splits den Zeitraum der Zeile genau ausfüllen - sonst gehört ein Teil woandershin.
-        if not inside or sum(periods[i].days for i in inside) != valid.days:
-            continue
-        shares = [weights[i] for i in inside]
-        if sum(shares, Decimal(0)) <= 0:
-            continue
-        for i, part in zip(inside, Money.from_decimal(net).allocate(shares)):
-            result[i] = part.amount
-    return result
+    total = sum(weights, Decimal(0))
+    if total <= 0 or price <= 0:
+        return None
+
+    def reproduces(candidate: Decimal) -> bool:
+        parts = [(candidate * weight).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for weight in weights]
+        return sum(parts, Decimal(0)) == net
+
+    for decimals in range(2, 9):
+        step = Decimal(1).scaleb(-decimals)
+        middle = (net / total).quantize(step, rounding=ROUND_HALF_UP)
+        if abs(middle - price) > price / 10:
+            return None  # zu weit weg - dann stimmt eher etwas anderes nicht
+        # Oft passen mehrere benachbarte Preise (151,19 und 151,20 ergeben beide 74,56 €):
+        # Versorger setzen "runde" Preise, also den mit den wenigsten Nachkommastellen.
+        fitting = [middle + step * offset for offset in range(-3, 4) if reproduces(middle + step * offset)]
+        if fitting:
+            return min(fitting, key=lambda c: (-c.normalize().as_tuple().exponent, abs(c - middle))).quantize(step)  # type: ignore[operator]
+    return None
 
 
 def find_cost_type(text: str, cost_type_names: Sequence[str]) -> str:
@@ -747,20 +764,75 @@ def _invoice_style_gross(
 ) -> Decimal | None:
     """Bruttokosten eines Abschnitts so gerechnet, wie Versorger es auf der Rechnung tun.
 
-    Arbeits- und Grundpreis-Zeile werden je für sich auf Cent gerundet, erst
-    die Summe bekommt die Umsatzsteuer. Weist die Rechnung den Nettobetrag
+    Arbeits- und Grundpreis-Zeile werden je für sich auf Cent gerundet (siehe
+    :meth:`SplitCalculation.net_parts`), erst die Summe bekommt die Umsatzsteuer. Weist die Rechnung den Nettobetrag
     einer Zeile für genau diesen Abschnitt aus (``work_net``/``base_net``),
     gilt dieser - er ist robuster als ein Preis, den die Texterkennung
     vielleicht verstümmelt hat ("151 €/Jahr" statt "151,20 €/Jahr").
     """
     if not calc.has_prices:
         return None
-    cent = Decimal("0.01")
-    work = work_net if work_net is not None else (used * (calc.working_price or Decimal(0))).quantize(cent, rounding=ROUND_HALF_UP)
-    base = base_net if base_net is not None else (
-        ((calc.base_price or Decimal(0)) * year_fraction(period)).quantize(cent, rounding=ROUND_HALF_UP)
-    )
+    computed_work, computed_base = calc.net_parts(period, used)
+    work = work_net if work_net is not None else computed_work
+    base = base_net if base_net is not None else computed_base
     return (work + base) * (Decimal(1) + (calc.vat_percent or Decimal(0)) / Decimal(100))
+
+
+def _check_against_stated_nets(
+    pieces: list[tuple[DateRange, Decimal, SplitCalculation]],
+    work: Sequence[PricedPeriod],
+    base: Sequence[PricedPeriod],
+) -> tuple[list[tuple[DateRange, Decimal, SplitCalculation]], list[Decimal | None], list[Decimal | None]]:
+    """Gleicht die aus Preisen berechneten Splits mit den Nettobeträgen der Preiszeilen ab.
+
+    Gerechnet wird wie im Split-Dialog (Preis × Menge bzw. Jahresanteil, je
+    Preiszeile auf Cent gerundet) - so zeigt der Dialog später dieselben
+    Beträge. Ergibt ein Grundpreis den ausgewiesenen Zeilenbetrag nur mit
+    starr 365 Tagen je Jahr (auch im Schaltjahr), wird diese Zählweise
+    eingestellt. Passt ein Preis sonst nicht, war er vermutlich verlesen und
+    wird repariert (siehe :func:`repair_price`). Nur
+    wenn das nicht gelingt und die Zeile genau einen Split betrifft, gilt der
+    ausgewiesene Betrag direkt.
+
+    Returns:
+        Die (ggf. mit reparierten Preisen versehenen) Abschnitte und je
+        Abschnitt die direkt zu übernehmenden Nettobeträge für Arbeits- und
+        Grundpreis (``None`` = aus dem Preis rechnen).
+    """
+    work_nets: list[Decimal | None] = [None] * len(pieces)
+    base_nets: list[Decimal | None] = [None] * len(pieces)
+    for prices, field_name, overrides in ((work, "working_price", work_nets), (base, "base_price", base_nets)):
+        for valid, _value, net in prices:
+            if valid is None or net is None:
+                continue
+            inside = [i for i, (period, _u, _c) in enumerate(pieces) if valid.start <= period.start and period.end <= valid.end]
+            if not inside or sum(pieces[i][0].days for i in inside) != valid.days:
+                continue  # Die Splits füllen den Zeitraum der Zeile nicht genau aus
+            part = 0 if field_name == "working_price" else 1
+            computed = sum(
+                (pieces[i][2].net_parts(pieces[i][0], pieces[i][1])[part] for i in inside), Decimal(0)
+            )
+            if computed == net:
+                continue
+            if part == 1 and pieces[inside[0]][2].base_price_days is None:
+                # Erst die andere Zählweise probieren: starr 1/365 je Tag statt kalendergenau.
+                fixed = [replace(pieces[i][2], base_price_days=Decimal(365)) for i in inside]
+                if sum((calc.net_parts(pieces[i][0], pieces[i][1])[1] for i, calc in zip(inside, fixed)), Decimal(0)) == net:
+                    for i, calc in zip(inside, fixed):
+                        pieces[i] = (pieces[i][0], pieces[i][1], calc)
+                    continue
+            price = getattr(pieces[inside[0]][2], field_name)
+            weights = [
+                pieces[i][1] if part == 0 else pieces[i][2].base_fraction(pieces[i][0]) for i in inside
+            ]
+            repaired = repair_price(net, weights, price) if price else None
+            if repaired is not None:
+                for i in inside:
+                    period, used, calc = pieces[i]
+                    pieces[i] = (period, used, replace(calc, **{field_name: repaired}))
+            elif len(inside) == 1:
+                overrides[inside[0]] = net
+    return pieces, work_nets, base_nets
 
 
 def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSplit]:
@@ -772,13 +844,16 @@ def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSpl
     if draft.working_price is None and draft.base_price_per_year is None:
         return []
     work, base = working_prices(lines), base_prices(lines)
+    base_days = Decimal(365) if base_price_per_fixed_days(lines) else None
 
     def prices(period: DateRange) -> dict[str, Decimal | None]:
         # Ändern sich die Preise im Abrechnungszeitraum, gilt je Abschnitt der Preis seines Zeitraums.
+        base_price = price_for(period, base, draft.base_price_per_year)
         return {
             "working_price": price_for(period, work, draft.working_price),
-            "base_price": price_for(period, base, draft.base_price_per_year),
+            "base_price": base_price,
             "vat_percent": draft.vat_percent,
+            "base_price_days": base_days if base_price else None,
         }
 
     pieces: list[tuple[DateRange, Decimal, SplitCalculation]] = []
@@ -796,15 +871,9 @@ def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSpl
     if len(pieces) < 2:
         return []
 
-    periods = [period for period, _used, _calc in pieces]
-    work_nets = allocate_stated_nets(periods, [used for _p, used, _c in pieces], work)
-    base_nets = allocate_stated_nets(periods, [Decimal(period.days) for period in periods], base)
+    pieces, work_nets, base_nets = _check_against_stated_nets(pieces, work, base)
     exact = [
-        _invoice_style_gross(
-            calc, period, used,
-            work_nets[i] if calc.working_price else None,
-            base_nets[i] if calc.base_price else None,
-        )
+        _invoice_style_gross(calc, period, used, work_nets[i], base_nets[i])
         for i, (period, used, calc) in enumerate(pieces)
     ]
     if any(value is None for value in exact):
