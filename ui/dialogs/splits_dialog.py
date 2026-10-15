@@ -44,7 +44,9 @@ from utils.formatters import format_money, format_period, format_quantity
     _COL_WORKING_PRICE,
     _COL_BASE_PRICE,
     _COL_AMOUNT,
-) = range(9)
+    _COL_CO2_COST,
+    _COL_CO2_EMISSION,
+) = range(11)
 
 #: Preise werden von Versorgern mit bis zu acht Nachkommastellen angegeben.
 _PRICE_DECIMALS = 8
@@ -132,7 +134,7 @@ class SplitsDialog(QDialog):
         layout.addLayout(self._build_tariff_bar(splits))
 
         unit_label = unit or "Einheit"
-        self._table = QTableWidget(0, 9)
+        self._table = QTableWidget(0, 11)
         self._table.setHorizontalHeaderLabels(
             [
                 "von",
@@ -144,8 +146,17 @@ class SplitsDialog(QDialog):
                 f"Arbeitspreis (€/{unit_label})",
                 "Grundpreis (€/Jahr)",
                 "Betrag (brutto)",
+                "CO2-Kosten",
+                "CO2 (kg)",
             ]
         )
+        # CO2 je Abschnitt: nur bei Brennstoffen (wie die Gas-Spalten), für die Jahresanteile laut Rechnung.
+        for column in (_COL_CO2_COST, _COL_CO2_EMISSION):
+            self._table.setColumnHidden(column, not self._show_volume)
+            self._table.horizontalHeaderItem(column).setToolTip(
+                "CO2-Kosten brutto bzw. CO2-Ausstoß dieses Abschnitts laut Rechnung (optional). Nur wenn die "
+                "Rechnung sie je Zeitraum nennt - sonst wird die CO2-Summe der Rechnung nach Verbrauch aufgeteilt."
+            )
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(40)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -347,6 +358,15 @@ class SplitsDialog(QDialog):
             if column not in (_COL_FROM, _COL_TO):
                 widget.setSpecialValueText("–")  # 0 = nicht angegeben
             self._table.setCellWidget(row, column, widget)
+        co2_cost_spin = MoneySpin()
+        co2_emission_spin = DecimalSpin(decimals=2)
+        co2_cost_spin.set_money(split.co2_cost or Money.zero())
+        co2_emission_spin.set_decimal(split.co2_emission or Decimal(0))
+        for column, spin in ((_COL_CO2_COST, co2_cost_spin), (_COL_CO2_EMISSION, co2_emission_spin)):
+            spin.setSpecialValueText("–")
+            spin.setEnabled(not split.is_difference)
+            spin.valueChanged.connect(lambda *_: self._update_status())
+            self._table.setCellWidget(row, column, spin)
         if split.is_difference:
             # Differenz: gilt für den ganzen Zeitraum, nur der Betrag ist einzutragen (auch negativ).
             amount_spin.setRange(-999_999_999.0, 999_999_999.0)
@@ -422,6 +442,7 @@ class SplitsDialog(QDialog):
             consumption = self._spin(row, _COL_CONSUMPTION).decimal_value()
             # Ohne Gesamtverbrauch und ohne Eintrag hat der Split keinen Verbrauch.
             has_consumption = self.invoice_consumption is not None or consumption > 0
+            co2_cost, co2_emission = self._row_co2(row)
             result.append(
                 InvoiceSplit(
                     period,
@@ -429,6 +450,8 @@ class SplitsDialog(QDialog):
                     consumption if has_consumption else None,
                     None if calculation.is_empty else calculation,
                     amount_corrected=self._is_manual(row) and calculation.has_prices,
+                    co2_cost=co2_cost,
+                    co2_emission=co2_emission,
                 )
             )
         return result
@@ -505,6 +528,14 @@ class SplitsDialog(QDialog):
         finally:
             self._updating = False
         self._update_status()
+
+    def _row_co2(self, row: int) -> tuple[Money | None, Decimal | None]:
+        """CO2-Kosten und -Ausstoß einer Zeile (leer = ``None``)."""
+        cost_widget = self._table.cellWidget(row, _COL_CO2_COST)
+        emission_widget = self._table.cellWidget(row, _COL_CO2_EMISSION)
+        assert isinstance(cost_widget, MoneySpin) and isinstance(emission_widget, DecimalSpin)
+        cost, emission = cost_widget.money(), emission_widget.decimal_value()
+        return (cost if not cost.is_zero else None), (emission if emission > 0 else None)
 
     def _is_difference(self, row: int) -> bool:
         """``True`` für den Differenz-Eintrag."""
@@ -627,6 +658,18 @@ class SplitsDialog(QDialog):
         corrected = sum(1 for split in splits if split.amount_corrected)
         if corrected:
             text += f"\n✎ {corrected} Betrag/Beträge von Hand korrigiert (farbig markiert)"
+        co2_costs = [s.co2_cost for s in splits if s.co2_cost is not None]
+        co2_emissions = [s.co2_emission for s in splits if s.co2_emission is not None]
+        if co2_costs or co2_emissions:
+            regular = sum(1 for s in splits if not s.is_difference)
+            parts = []
+            if co2_costs:
+                parts.append(format_money(sum(co2_costs, Money.zero())))
+            if co2_emissions:
+                parts.append(f"{format_quantity(sum(co2_emissions, Decimal(0)))} kg")
+            text += f"\nCO2 der Splits: {' · '.join(parts)}"
+            if len(co2_costs) < regular or len(co2_emissions) < regular:
+                text += " - unvollständig: dann gilt die CO2-Summe der Rechnung, nach Verbrauch aufgeteilt"
         difference = next((split for split in splits if split.is_difference), None)
         if difference is not None:
             text += f"\nDifferenz-Eintrag {format_money(difference.amount)} - linear über den ganzen Zeitraum verteilt"

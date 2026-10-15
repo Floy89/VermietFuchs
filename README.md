@@ -79,7 +79,7 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-370 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+385 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
 Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
@@ -372,6 +372,15 @@ Speichern gemerkt und nicht mehr neu berechnet. **Berechnung wiederherstellen** 
 markierte Zeile (ohne Auswahl: alle korrigierten) zurück. Eine Korrektur verschiebt keine Cent in
 andere Zeilen - der Unterschied zur Rechnung bleibt sichtbar.
 
+**CO2-Kosten (CO2-Kostenaufteilungsgesetz):** Bei Brennstoff- und Heizkosten hat der
+Rechnungsdialog die Felder *CO2 laut Rechnung* - Kosten brutto, Ausstoß in kg, Emissionsfaktor
+(optional). *Beleg auslesen …* trägt sie aus der Rechnung ein. Im Tab *Rechnungen* zeigt die
+aggregierte Rechnung je Jahr die Summen für die Meldung an den Messdienst (farbig, wenn eine
+Rechnung keine CO2-Angaben hat). Läuft eine Rechnung über den Jahreswechsel, zählen die CO2-Werte
+je Split (Split-Dialog, Spalten *CO2-Kosten* und *CO2 (kg)*, beim Auslesen aus der CO2-Tabelle
+der Rechnung) - sonst wird die Summe nach Verbrauch aufgeteilt. Das ist beim Ausstoß genau, bei
+den Kosten nur näherungsweise, weil der CO2-Preis zum Jahreswechsel steigt.
+
 **Differenz als Eintrag:** Bleibt ein Restbetrag (meist Rundungscent), trägt dieser Knopf ihn als
 eigenen Eintrag ein. Er gilt für den ganzen Rechnungszeitraum, hat keinen Verbrauch, darf negativ
 sein und wird bei der Jahreszuordnung linear nach Tagen auf die übrigen Splits verteilt.
@@ -594,6 +603,7 @@ Tabellenskizze:
 | Tabelle `prepayment_rates` statt `tenants.prepayment_amount` (Schema 3) | Historie der vereinbarten Vorauszahlungen mit Gültigkeitszeitraum; Erhöhungen abbildbar |
 | Tabelle `payments` entfällt (Schema 4) | Einzelzahlungen werden nicht mehr erfasst; Vorauszahlungen ergeben sich aus den Raten |
 | `costs` + `invoice_date`, `consumption`, `consumption_unit`, `excluded` (Schema 4) | Rechnungsmanagement: Verbrauch für die Messdienst-Meldung, Ausschluss einzelner Rechnungen |
+| `costs.co2_cost`, `co2_emission`, `co2_factor` (Schema 12) | CO2-Angaben laut Rechnung für die Meldung an den Messdienst |
 | Tabelle `document_profiles` (Schema 11) | Gelerntes je Rechnungsabsender für das Auslesen von Belegen ohne KI |
 | Tabelle `invoice_bundles`, `costs.bundle_id`, `cost_attachments.bundle_id` (Schema 10) | Sammelrechnung: eine Rechnung mit mehreren Kostenarten; ein Beleg gehört zu einer Rechnung *oder* einer Sammelrechnung |
 | Tabelle `cost_attachments` (Schema 9) | Belege (PDF/Foto) je Rechnung als BLOB; werden mit der Rechnung gelöscht |

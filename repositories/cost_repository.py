@@ -98,6 +98,9 @@ class SqliteCostRepository(SqliteRepository[Cost]):
             "excluded": int(entity.excluded),
             "difference_key": entity.difference_key.value,
             "bundle_id": entity.bundle_id,
+            "co2_cost": entity.co2_cost.cents if entity.co2_cost is not None else None,
+            "co2_emission": str(entity.co2_emission) if entity.co2_emission is not None else None,
+            "co2_factor": str(entity.co2_factor) if entity.co2_factor is not None else None,
             "splits": json.dumps(
                 [
                     {
@@ -108,6 +111,8 @@ class SqliteCostRepository(SqliteRepository[Cost]):
                         **_calculation_to_json(split.calculation),
                         **({"manual": True} if split.amount_corrected else {}),
                         **({"difference": True} if split.is_difference else {}),
+                        **({"co2_cost": split.co2_cost.cents} if split.co2_cost is not None else {}),
+                        **({"co2_kg": str(split.co2_emission)} if split.co2_emission is not None else {}),
                     }
                     for split in entity.splits
                 ]
@@ -138,6 +143,9 @@ class SqliteCostRepository(SqliteRepository[Cost]):
             excluded=bool(row["excluded"]),
             difference_key=AllocationKey(row["difference_key"]),
             bundle_id=row["bundle_id"],
+            co2_cost=Money(row["co2_cost"]) if row["co2_cost"] is not None else None,
+            co2_emission=Decimal(row["co2_emission"]) if row["co2_emission"] else None,
+            co2_factor=Decimal(row["co2_factor"]) if row["co2_factor"] else None,
             splits=[
                 InvoiceSplit(
                     period=DateRange(date.fromisoformat(raw["from"]), date.fromisoformat(raw["to"])),
@@ -146,6 +154,8 @@ class SqliteCostRepository(SqliteRepository[Cost]):
                     calculation=_calculation_from_json(raw.get("calc")),
                     amount_corrected=bool(raw.get("manual", False)),
                     is_difference=bool(raw.get("difference", False)),
+                    co2_cost=Money(raw["co2_cost"]) if raw.get("co2_cost") is not None else None,
+                    co2_emission=Decimal(raw["co2_kg"]) if raw.get("co2_kg") else None,
                 )
                 for raw in json.loads(row["splits"] or "[]")
             ],

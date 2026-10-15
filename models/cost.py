@@ -63,6 +63,11 @@ class InvoiceSplit:
             differenzen des Versorgers. Er gilt für den ganzen Rechnungszeitraum,
             hat keinen Verbrauch, darf negativ sein und wird bei der
             Jahreszuordnung linear (nach Tagen) auf die übrigen Splits verteilt.
+        co2_cost / co2_emission: CO2-Kosten brutto und CO2-Ausstoß (kg) des
+            Abschnitts, wenn die Rechnung sie je Zeitraum ausweist - die
+            Kosten je Jahr weichen ab, weil der CO2-Preis zum Jahreswechsel
+            steigt. Ohne Angabe wird die CO2-Summe der Rechnung nach Verbrauch
+            aufgeteilt.
     """
 
     period: DateRange
@@ -71,6 +76,8 @@ class InvoiceSplit:
     calculation: SplitCalculation | None = None
     amount_corrected: bool = False
     is_difference: bool = False
+    co2_cost: Money | None = None
+    co2_emission: Decimal | None = None
 
 
 def validate_splits(
@@ -201,6 +208,11 @@ class Cost:
             Gesamtverbrauch: Wonach die Differenz zwischen Gesamtverbrauch und
             Summe der Wohnungszähler verteilt wird (siehe :data:`DIFFERENCE_KEYS`).
         excluded: ``True`` = Rechnung wird weder aggregiert noch abgerechnet.
+        co2_cost / co2_emission / co2_factor: CO2-Kosten brutto, CO2-Ausstoß in
+            kg und Emissionsfaktor in kg/kWh laut Rechnung (Brennstoffe, nach
+            dem CO2-Kostenaufteilungsgesetz). Für die Meldung an den
+            Messdienst; zeitliche Ausschnitte bekommen ihren Anteil nach
+            Verbrauch (ohne Verbrauch nach Betrag).
         splits: Optionale Teilabschnitte (siehe :class:`InvoiceSplit`). Sind
             welche vorhanden, bestimmen sie allein, wie viel der Rechnung in
             welchen Zeitraum fällt.
@@ -226,6 +238,9 @@ class Cost:
     splits: list[InvoiceSplit] = field(default_factory=list)
     difference_key: AllocationKey = AllocationKey.CONSUMPTION
     bundle_id: int | None = None
+    co2_cost: Money | None = None
+    co2_emission: Decimal | None = None
+    co2_factor: Decimal | None = None
     id: int | None = None
     full_amount: Money | None = None
     full_period: DateRange | None = None
@@ -243,6 +258,13 @@ class Cost:
             require_non_negative(self.consumption, "Verbrauch")
             if not self.consumption_unit:
                 raise ValidationError("Bitte zum Verbrauch eine Einheit angeben (z. B. kWh oder m³).")
+
+        if self.co2_cost is not None and self.co2_cost.is_negative:
+            raise ValidationError("Die CO2-Kosten dürfen nicht negativ sein.")
+        if self.co2_emission is not None:
+            require_non_negative(self.co2_emission, "CO2-Ausstoß")
+        if self.co2_factor is not None:
+            require_in_range(self.co2_factor, Decimal(0), Decimal(10), "Emissionsfaktor (kg/kWh)")
 
         allowed = self.cost_type.allowed_keys()
         if self.allocation_key not in allowed:
@@ -370,11 +392,22 @@ class Cost:
                 return [self]
             return [self._cut(self.period, overlap, self.amount, self.consumption, split_period=None)]
 
+        # CO2 je Split nur verwenden, wenn *alle* Splits Angaben haben - sonst passt die Summe nicht.
+        own_co2_cost = all(split.co2_cost is not None for split in splits)
+        own_co2_emission = all(split.co2_emission is not None for split in splits)
         result: list[Cost] = []
         for split in splits:
             overlap = split.period.intersection(billing_period)
             if overlap is not None:
-                result.append(self._cut(split.period, overlap, split.amount, split.consumption, split.period))
+                piece = self._cut(split.period, overlap, split.amount, split.consumption, split.period)
+                factor = Decimal(overlap.days) / Decimal(split.period.days)
+                if own_co2_cost and split.co2_cost is not None:
+                    piece = replace(piece, co2_cost=_scale(split.co2_cost, factor))
+                if own_co2_emission and split.co2_emission is not None:
+                    piece = replace(
+                        piece, co2_emission=(split.co2_emission * factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    )
+                result.append(piece)
         return result
 
     def _splits_with_difference_spread(self) -> list[InvoiceSplit]:
@@ -413,10 +446,14 @@ class Cost:
         for piece in pieces:
             for tenant_id, share in piece.direct_shares.items():
                 direct[tenant_id] = direct.get(tenant_id, Money.zero()) + share
+        co2_costs = [piece.co2_cost for piece in pieces if piece.co2_cost is not None]
+        co2_emissions = [piece.co2_emission for piece in pieces if piece.co2_emission is not None]
         return replace(
             self,
             amount=sum((piece.amount for piece in pieces), Money.zero()),
             consumption=sum(consumptions, Decimal(0)) if consumptions else None,
+            co2_cost=sum(co2_costs, Money.zero()) if co2_costs else None,
+            co2_emission=sum(co2_emissions, Decimal(0)) if co2_emissions else None,
             period=overlap,
             direct_shares=direct,
             full_amount=self.amount,
@@ -449,10 +486,20 @@ class Cost:
         # Direkt zugeordnete Beträge beziehen sich auf die ganze Rechnung und
         # werden im Verhältnis des Stücks zum Rechnungsbetrag mitgenommen.
         share_factor = Decimal(amount.cents) / Decimal(self.amount.cents) if self.amount.cents else Decimal(0)
+        # CO2 entsteht mit dem Verbrauch - der Anteil folgt den kWh, ohne Verbrauch dem Betrag.
+        co2_factor = share_factor
+        if consumption is not None and self.consumption:
+            co2_factor = consumption / self.consumption
         return replace(
             self,
             amount=amount,
             consumption=consumption,
+            co2_cost=_scale(self.co2_cost, co2_factor) if self.co2_cost is not None else None,
+            co2_emission=(
+                (self.co2_emission * co2_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if self.co2_emission is not None
+                else None
+            ),
             period=overlap,
             direct_shares={tenant_id: _scale(share, share_factor) for tenant_id, share in self.direct_shares.items()},
             splits=[],

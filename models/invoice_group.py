@@ -101,3 +101,20 @@ class InvoiceGroup:
         if not values or not self.consumption_unit:
             return None
         return sum(values, Decimal(0))
+
+    @property
+    def total_co2_cost(self) -> Money | None:
+        """Summe der CO2-Kosten (brutto) im Jahr; ``None``, wenn keine Rechnung welche nennt."""
+        values = [part.part.co2_cost for part in self.parts if part.part.co2_cost is not None]
+        return sum(values, Money.zero()) if values else None
+
+    @property
+    def total_co2_emission(self) -> Decimal | None:
+        """Summe des CO2-Ausstoßes in kg im Jahr; ``None``, wenn keine Rechnung einen nennt."""
+        values = [part.part.co2_emission for part in self.parts if part.part.co2_emission is not None]
+        return sum(values, Decimal(0)) if values else None
+
+    @property
+    def co2_missing(self) -> int:
+        """Wie viele Rechnungsanteile keine CO2-Angaben haben (nur bei Heizkosten von Belang)."""
+        return sum(1 for part in self.parts if part.part.co2_cost is None and part.part.co2_emission is None)

@@ -12,7 +12,11 @@ from models.enums import AllocationKey
 from models.value_objects import DateRange, Money
 
 #: Felder, deren Fundstelle im Beleg gelernt werden kann.
-LEARNABLE_FIELDS: tuple[str, ...] = ("amount", "invoice_date", "period_start", "period_end", "consumption")
+LEARNABLE_FIELDS: tuple[str, ...] = (
+    "amount", "invoice_date", "period_start", "period_end", "consumption", "co2_cost", "co2_emission",
+)
+#: Lernbare Felder, deren Wert ein Datum ist (alle anderen sind Zahlen).
+DATE_FIELDS: frozenset[str] = frozenset({"invoice_date", "period_start", "period_end"})
 
 #: Anzeigenamen der lernbaren Felder.
 FIELD_LABELS: dict[str, str] = {
@@ -21,6 +25,8 @@ FIELD_LABELS: dict[str, str] = {
     "period_start": "Zeitraum von",
     "period_end": "Zeitraum bis",
     "consumption": "Verbrauch",
+    "co2_cost": "CO2-Kosten",
+    "co2_emission": "CO2-Ausstoß",
 }
 
 
@@ -121,6 +127,9 @@ class DocumentDraft:
     working_price: Decimal | None = None
     base_price_per_year: Decimal | None = None
     vat_percent: Decimal | None = None
+    co2_cost: Money | None = None
+    co2_emission: Decimal | None = None
+    co2_factor: Decimal | None = None
     splits: list[InvoiceSplit] = field(default_factory=list)
     learned_fields: list[str] = field(default_factory=list)
 

@@ -36,7 +36,7 @@ from models.invoice_checklist import (
     expected_arrival,
 )
 from models.invoice_group import InvoiceGroup
-from models.value_objects import DateRange
+from models.value_objects import DateRange, Money
 from ui import styles
 from ui.dialogs.bundle_dialog import BundleDialog
 from ui.dialogs.cost_dialog import CostDialog, TenantChoice
@@ -132,6 +132,16 @@ def describe_readiness(checklist: InvoiceChecklist, today: date) -> str:
             "dort ist keine Schätzung möglich."
         )
     return text
+
+
+def _co2_texts(cost: Money | None, emission: Decimal | None, relevant: bool) -> tuple[str, str]:
+    """Anzeige der CO2-Spalten: Werte, "–" bei fehlenden Angaben, leer bei anderen Kostenarten."""
+    if not relevant:
+        return "", ""
+    return (
+        format_money(cost) if cost is not None else "–",
+        f"{format_quantity(emission, 2)} kg" if emission is not None else "–",
+    )
 
 
 class InvoicesTab(BaseTab):
@@ -286,14 +296,20 @@ class InvoicesTab(BaseTab):
             card.header.addWidget(button)
 
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(4)
-        self._tree.setHeaderLabels(["In Abrechnung · Bezeichnung", "Anteil im Zeitraum", "Betrag", "Verbrauch"])
+        self._tree.setColumnCount(6)
+        self._tree.setHeaderLabels(
+            ["In Abrechnung · Bezeichnung", "Anteil im Zeitraum", "Betrag", "Verbrauch", "CO2-Kosten", "CO2-Ausstoß"]
+        )
+        self._tree.headerItem().setToolTip(
+            4, "CO2-Kosten brutto laut Rechnung - für die Meldung an den Messdienst (CO2-Kostenaufteilungsgesetz)"
+        )
+        self._tree.headerItem().setToolTip(5, "CO2-Ausstoß laut Rechnung in kg - für die Meldung an den Messdienst")
         self._tree.setAlternatingRowColors(True)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._tree.setUniformRowHeights(True)
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3):
+        for column in (1, 2, 3, 4, 5):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
         card.body.addWidget(self._tree)
@@ -474,6 +490,11 @@ class InvoicesTab(BaseTab):
         bold.setBold(True)
         muted = QBrush(QColor(styles.color("disabled")))
 
+        # CO2-Spalten nur zeigen, wenn es Heiz-/Brennstoffkosten gibt.
+        with_co2 = any(group.cost_type.heating_rule for group in groups)
+        self._tree.setColumnHidden(4, not with_co2)
+        self._tree.setColumnHidden(5, not with_co2)
+
         for group in groups:
             consumption = group.total_consumption
             top = QTreeWidgetItem(
@@ -482,12 +503,22 @@ class InvoicesTab(BaseTab):
                     f"{len(group.parts)} Rechnung(en)",
                     format_money(group.total_amount),
                     f"{format_quantity(consumption, 0)} {group.consumption_unit}" if consumption is not None else "",
+                    *_co2_texts(group.total_co2_cost, group.total_co2_emission, group.cost_type.heating_rule),
                 ]
             )
+            if group.cost_type.heating_rule and group.co2_missing:
+                warning = QBrush(QColor(styles.color("warning_text")))
+                for column in (4, 5):
+                    top.setForeground(column, warning)
+                    top.setToolTip(
+                        column,
+                        f"{group.co2_missing} Rechnung(santeil) ohne CO2-Angaben - Summe unvollständig. "
+                        "CO2-Kosten und -Ausstoß im Rechnungsdialog eintragen.",
+                    )
             top.setData(0, _GROUP_ROLE, group)
             top.setFlags(top.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             top.setCheckState(0, Qt.CheckState.Unchecked if group.excluded else Qt.CheckState.Checked)
-            for column in range(4):
+            for column in range(6):
                 top.setFont(column, bold)
                 if group.excluded:
                     top.setForeground(column, muted)
@@ -507,15 +538,16 @@ class InvoicesTab(BaseTab):
                         portion,
                         format_money(share.amount),
                         format_consumption(share),
+                        *_co2_texts(share.co2_cost, share.co2_emission, group.cost_type.heating_rule),
                     ]
                 )
                 if group.excluded:
-                    for column in range(4):
+                    for column in range(6):
                         child.setForeground(column, muted)
                 top.addChild(child)
 
             for item in (top, *[top.child(i) for i in range(top.childCount())]):
-                for column in (2, 3):
+                for column in (2, 3, 4, 5):
                     item.setTextAlignment(column, int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
             self._tree.addTopLevelItem(top)
 

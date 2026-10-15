@@ -26,7 +26,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Sequence
 
 from models.cost import InvoiceSplit
-from models.document import DocumentDraft, DocumentProfile, FieldAnchor
+from models.document import DATE_FIELDS, DocumentDraft, DocumentProfile, FieldAnchor
 from models.tariff import SplitCalculation, fit_amounts
 from models.value_objects import DateRange, Money
 from utils.numbers import to_decimal
@@ -103,6 +103,7 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"(?<![\d.])(\d{1,2})\.(\d{2})(\d{4})(?!\d)", r"\1.\2.\3", text)  # "15.102026"
     text = re.sub(r"(?<=\d)\s*m[3'’`´](?![\w])", " m³", text)                # "290 m'" / "290 m3"
     text = re.sub(r"(?i)\bkwh\b", "kWh", text)
+    text = re.sub(r"\bC0(?=2)", "CO", text)                                       # "C02" (Null statt O)
     text = re.sub(r"\bE(?:LJ|IJ|lJ|U\s)R\b", "EUR", text)                    # "ELJR", "EIJR"
     text = re.sub(r"(?i)/\s*J-?\s?ahr\b", "/Jahr", text)                     # "/J-ahr"
     # "09. Juli 2026" -> "09.07.2026": dann gelten für solche Daten dieselben Regeln.
@@ -558,6 +559,75 @@ def find_cost_type(text: str, cost_type_names: Sequence[str]) -> str:
     return max(scores, key=lambda name: (scores[name], -order.index(name)))
 
 
+def find_co2(lines: Sequence[str]) -> tuple[Money | None, Decimal | None, Decimal | None]:
+    """CO2-Angaben nach dem CO2-Kostenaufteilungsgesetz: Kosten brutto, Ausstoß in kg, Emissionsfaktor.
+
+    Versorger weisen sie in einem eigenen Abschnitt aus ("Information(en)
+    zum/gemäß CO2-Kostenaufteilungsgesetz"), z. B.::
+
+        Brennstoffemissionen der Erdgaslieferung in 7.438,44 kg/CO2
+        Preisbestandteile CO2-Kosten (inkl. Umsatzsteuer) 447,00 EUR
+        Heizwertbezogener Emissionsfaktor 0,1813900 kg CO2
+
+    oder als Tabelle je Zeitraum ("… 0,18139 kg/kWh 16.949 kWh 3.074,38 kg
+    55,00 €/t 19% 201,22 €") mit einer Zeile "Gesamtkosten 513,46 €".
+    """
+    start = next(
+        (i for i, line in enumerate(lines) if re.search(r"co2.?kosten\s*auf|co2kostaufg", line, re.I)
+         and not re.search(r"https?://|www\.", line, re.I)),
+        None,
+    )
+    section = list(lines[start:]) if start is not None else []
+    if not section:
+        return None, None, None
+
+    cost: Money | None = None
+    for keyword in (r"gesamtkosten", r"co2.?kosten"):
+        line = next(
+            (l for l in section if re.search(keyword, l, re.I) and _money_values(l) and "€/t" not in l), None
+        )
+        if line is not None:
+            cost = Money.from_decimal(_money_values(line)[-1])
+            break
+
+    emission: Decimal | None = None
+    stated = next((l for l in section if re.search(r"brennstoffemission", l, re.I) and re.search(r"kg", l)), None)
+    if stated is not None and (match := re.search(rf"({_NUMBER})\s*kg", stated)):
+        emission = to_decimal(match.group(1))
+    else:
+        rows = [
+            to_decimal(match.group(1))
+            for l in section
+            if re.match(rf"\s*{_DATE}", l) and (match := re.search(rf"({_NUMBER})\s*kg(?!\s*/)", l))
+        ]
+        if rows and all(value is not None for value in rows):
+            emission = sum((value for value in rows if value is not None), Decimal(0))
+
+    factor: Decimal | None = None
+    for l in section:
+        if match := re.search(r"(0,\d{3,8})\s*kg\s*(?:/\s*kWh|CO2)", l, re.I):
+            factor = to_decimal(match.group(1))
+            break
+    return cost, emission, factor
+
+
+def co2_rows(lines: Sequence[str]) -> list[tuple[DateRange, Money, Decimal]]:
+    """CO2-Tabelle je Zeitraum: ``(Zeitraum, Kosten brutto, Ausstoß kg)`` - leer, wenn es keine gibt.
+
+    Beispielzeile: "05.07.2025 - 31.12.2025 0,18139 kg/kWh 16.949 kWh 3.074,38 kg 55,00 €/t 19% 201,22 €"
+    """
+    result: list[tuple[DateRange, Money, Decimal]] = []
+    for line in lines:
+        if not re.search(r"€\s*/\s*t|eur\s*/\s*t", line, re.I):
+            continue
+        period = _line_range(line)
+        emission = re.search(rf"({_NUMBER})\s*kg(?!\s*/)", line)
+        costs = _money_values(line)
+        if period is not None and emission and costs and (kg := to_decimal(emission.group(1))) is not None:
+            result.append((period, Money.from_decimal(costs[-1]), kg))
+    return result
+
+
 def find_reading_splits(lines: Sequence[str], period: DateRange | None) -> list[tuple[DateRange, Decimal]]:
     """Abschnitte aus Zählerständen: Zeilen mit Datum, Zählerstand und Verbrauch.
 
@@ -717,19 +787,31 @@ def read_document(
     draft.working_price = find_working_price(lines)
     draft.base_price_per_year = find_base_price(lines)
     draft.cost_type_name = find_cost_type("\n".join(lines), cost_type_names)
+    draft.co2_cost, draft.co2_emission, draft.co2_factor = find_co2(lines)
     draft.description = readable_name(issuer_name)
 
     if profile is not None:
         _apply_profile(draft, lines, profile)
-    draft.splits = _build_splits(draft, lines)
+    draft.splits = _with_co2(_build_splits(draft, lines), co2_rows(lines))
     return draft
+
+
+def _with_co2(splits: list[InvoiceSplit], rows: Sequence[tuple[DateRange, Money, Decimal]]) -> list[InvoiceSplit]:
+    """Trägt die CO2-Angaben je Zeitraum in die Splits mit genau diesem Zeitraum ein."""
+    by_period = {period: (cost, kg) for period, cost, kg in rows}
+    return [
+        replace(split, co2_cost=by_period[split.period][0], co2_emission=by_period[split.period][1])
+        if split.period in by_period
+        else split
+        for split in splits
+    ]
 
 
 def _apply_profile(draft: DocumentDraft, lines: Sequence[str], profile: DocumentProfile) -> None:
     """Gelerntes übernehmen: Fundstellen vor allgemeinen Regeln, gemerkte Werte vor Vermutungen."""
     found: dict[str, date | Decimal] = {}
     for field_name, anchor in profile.anchors.items():
-        kind = "date" if field_name in ("invoice_date", "period_start", "period_end") else "number"
+        kind = "date" if field_name in DATE_FIELDS else "number"
         value = apply_anchor(lines, anchor, kind)
         if value is not None:
             found[field_name] = value
@@ -744,6 +826,10 @@ def _apply_profile(draft: DocumentDraft, lines: Sequence[str], profile: Document
         draft.amount = Money.from_decimal(found["amount"])  # type: ignore[arg-type]
     if isinstance(found.get("consumption"), Decimal):
         draft.consumption = found["consumption"]  # type: ignore[assignment]
+    if isinstance(found.get("co2_cost"), Decimal):
+        draft.co2_cost = Money.from_decimal(found["co2_cost"])  # type: ignore[arg-type]
+    if isinstance(found.get("co2_emission"), Decimal):
+        draft.co2_emission = found["co2_emission"]  # type: ignore[assignment]
 
     draft.cost_type_id = profile.cost_type_id
     draft.allocation_key = profile.allocation_key

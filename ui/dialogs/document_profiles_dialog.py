@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from models.cost_type import CostType
-from models.document import FIELD_LABELS, LEARNABLE_FIELDS, DocumentProfile
+from models.document import DATE_FIELDS, FIELD_LABELS, LEARNABLE_FIELDS, DocumentProfile
 from services.document_service import DocumentService
 from ui.dialogs.base_dialog import FormDialog
 from ui.helpers import ErrorGuard, confirm, fill_combo, make_button, select_data
@@ -248,7 +248,7 @@ class DocumentProfilesDialog(QDialog):
                 anchor = profile.anchors.get(field_name)
                 if anchor is None:
                     continue
-                kind = "number" if field_name in ("amount", "consumption") else "date"
+                kind = "date" if field_name in DATE_FIELDS else "number"
                 item = QListWidgetItem(f"{FIELD_LABELS[field_name]}: {anchor.describe(kind)}")
                 item.setData(_FIELD_ROLE, field_name)
                 self._anchor_list.addItem(item)

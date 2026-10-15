@@ -228,6 +228,32 @@ class CostDialog(FormDialog):
         consumption_row.addWidget(self._consumption_spin, 1)
         consumption_row.addWidget(self._unit_edit)
 
+        # CO2-Angaben laut Rechnung (CO2-Kostenaufteilungsgesetz) - nur bei Brennstoff-/Heizkosten.
+        # Sie werden nicht umgelegt, sondern dem Messdienst gemeldet (Tab "Rechnungen", Jahressumme).
+        self._co2_cost_spin = MoneySpin()
+        self._co2_emission_spin = DecimalSpin(decimals=2, suffix=" kg")
+        self._co2_factor_spin = DecimalSpin(decimals=7, maximum=10.0, suffix=" kg/kWh")
+        for spin, tip in (
+            (self._co2_cost_spin, "CO2-Kosten brutto laut Rechnung (inkl. Umsatzsteuer)"),
+            (self._co2_emission_spin, "CO2-Ausstoß bzw. Brennstoffemissionen laut Rechnung in kg"),
+            (self._co2_factor_spin, "Emissionsfaktor laut Rechnung (optional), z. B. 0,18139 kg/kWh"),
+        ):
+            spin.setSpecialValueText("–")
+            spin.setToolTip(tip)
+        co2_row = QHBoxLayout()
+        for caption, spin in (
+            ("Kosten brutto", self._co2_cost_spin),
+            ("Ausstoß", self._co2_emission_spin),
+            ("Emissionsfaktor", self._co2_factor_spin),
+        ):
+            label = QLabel(caption)
+            label.setObjectName("Muted")
+            co2_row.addWidget(label)
+            co2_row.addWidget(spin, 1)
+        self._co2_row = QWidget()
+        self._co2_row.setLayout(co2_row)
+        co2_row.setContentsMargins(0, 0, 0, 0)
+
         # Splits (Teilabschnitte laut Rechnung) werden in einem eigenen Dialog gepflegt.
         self._splits: list[InvoiceSplit] = list(cost.splits) if cost else []
         self._splits_button = make_button(
@@ -280,6 +306,7 @@ class CostDialog(FormDialog):
         self.form.addRow("Zeitraum bis", self._to_edit)
         self.form.addRow("", self._period_hint)
         self.form.addRow("Verbrauch laut Rechnung", consumption_row)
+        self.form.addRow("CO2 laut Rechnung", self._co2_row)
         self.form.addRow("Splits", splits_row)
         self.form.addRow("Umlageschlüssel", self._key_combo)
         self.form.addRow("Verbrauchsanteil", self._share_spin)
@@ -310,6 +337,9 @@ class CostDialog(FormDialog):
             if cost.consumption is not None:
                 self._consumption_spin.set_decimal(cost.consumption)
             self._unit_edit.setText(cost.consumption_unit)
+            self._co2_cost_spin.set_money(cost.co2_cost or Money.zero())
+            self._co2_emission_spin.set_decimal(cost.co2_emission or Decimal(0))
+            self._co2_factor_spin.set_decimal(cost.co2_factor or Decimal(0))
             self._excluded_check.setChecked(cost.excluded)
             select_data(self._difference_combo, cost.difference_key)
 
@@ -468,6 +498,11 @@ class CostDialog(FormDialog):
             if draft.consumption_unit:
                 self._unit_edit.setText(draft.consumption_unit)
             applied.append("Verbrauch")
+        if draft.co2_cost is not None or draft.co2_emission is not None:
+            self._co2_cost_spin.set_money(draft.co2_cost or Money.zero())
+            self._co2_emission_spin.set_decimal(draft.co2_emission or Decimal(0))
+            self._co2_factor_spin.set_decimal(draft.co2_factor or Decimal(0))
+            applied.append("CO2-Angaben")
         if draft.splits and draft.period is not None and draft.amount is not None:
             try:
                 validate_splits(draft.splits, draft.period, draft.amount, draft.consumption)
@@ -607,6 +642,8 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
         if cost_type is None:
             return
         self._basis_label.setText(cost_type.legal_basis or "Eigene Kostenart")
+        # CO2-Kostenaufteilungsgesetz: gilt für Brennstoffe von Heizung und Warmwasser.
+        self.form.setRowVisible(self._co2_row, cost_type.heating_rule)
         # Einheit des Verbrauchs vorschlagen, solange der Benutzer keine eingetragen hat.
         if not self._unit_edit.text().strip() and cost_type.meter_type is not None:
             self._unit_edit.setText(cost_type.meter_type.unit)
@@ -676,6 +713,19 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
     # ------------------------------------------------------------------ #
     # Speichern
     # ------------------------------------------------------------------ #
+    def _co2_values(self, cost_type: CostType) -> dict[str, object]:
+        """Die CO2-Angaben aus dem Formular - leer bzw. bei anderen Kostenarten ``None``."""
+        if not cost_type.heating_rule:
+            return {"co2_cost": None, "co2_emission": None, "co2_factor": None}
+        cost = self._co2_cost_spin.money()
+        emission = self._co2_emission_spin.decimal_value()
+        factor = self._co2_factor_spin.decimal_value()
+        return {
+            "co2_cost": cost if not cost.is_zero else None,
+            "co2_emission": emission if emission > 0 else None,
+            "co2_factor": factor if factor > 0 else None,
+        }
+
     def _apply(self) -> None:
         cost_type = self._selected_type()
         if cost_type is None:
@@ -698,6 +748,7 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
             "consumption": self._entered_consumption(),
             "consumption_unit": self._unit_edit.text() if self._consumption_spin.value() > 0 else "",
             "excluded": self._excluded_check.isChecked(),
+            **self._co2_values(cost_type),
             "difference_key": (
                 self._difference_combo.currentData() if key is AllocationKey.CONSUMPTION else AllocationKey.CONSUMPTION
             ),

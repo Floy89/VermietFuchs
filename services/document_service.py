@@ -71,6 +71,10 @@ class DocumentService:
             values["invoice_date"] = cost.invoice_date
         if cost.consumption is not None:
             values["consumption"] = cost.consumption
+        if cost.co2_cost is not None:
+            values["co2_cost"] = cost.co2_cost.amount
+        if cost.co2_emission is not None:
+            values["co2_emission"] = cost.co2_emission
         for field_name, value in values.items():
             kind = "number" if isinstance(value, Decimal) else "date"
             anchor = learn_anchor(lines, value, kind)
