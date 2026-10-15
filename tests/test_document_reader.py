@@ -225,6 +225,22 @@ class TestReading:
         draft = read_document(GAS_SPLIT_PRICES.format(base="151"), NAMES, source="ocr")
         assert [s.amount for s in draft.splits] == [Money.from_decimal("1754.71"), Money.from_decimal("2375.80")]
 
+    def test_gas_invoice_from_text_recognition(self) -> None:
+        # Typische Lesefehler: "EUR/Jahr" als "ELJR/J-ahr", Prozentzeichen der Steuer verschluckt -
+        # und darunter ein Bruttopreis, der nicht als Grundpreis gelten darf.
+        scanned = (
+            GAS.replace("174,00 EUR/Jahr", "174,00 ELJR/J-ahr")
+            .replace("2.569,08 EUR 19 % 488,13 EUR", "2.569,08 EUR 488,13 EUR")
+            + "Ihr aktueller Arbeitspreis beträgt 9,90 ct/kWh (brutto) und Ihr Grundpreis 240,00 EUR/Jahr (brutto).\n"
+        )
+        expected = read_document(GAS, NAMES)
+        draft = read_document(scanned, NAMES, source="ocr")
+
+        assert (draft.working_price, draft.base_price_per_year, draft.vat_percent) == (
+            Decimal("0.0612"), Decimal("174.00"), Decimal("19"),
+        )
+        assert [s.amount for s in draft.splits] == [s.amount for s in expected.splits]
+
     def test_no_splits_without_prices(self) -> None:
         text = "\n".join(line for line in WATER.splitlines() if "preis" not in line.lower())
         assert read_document(text, NAMES).splits == []

@@ -102,6 +102,8 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"(?<![\d.])(\d{1,2})\.(\d{2})(\d{4})(?!\d)", r"\1.\2.\3", text)  # "15.102026"
     text = re.sub(r"(?<=\d)\s*m[3'’`´](?![\w])", " m³", text)                # "290 m'" / "290 m3"
     text = re.sub(r"(?i)\bkwh\b", "kWh", text)
+    text = re.sub(r"\bE(?:LJ|IJ|lJ|U\s)R\b", "EUR", text)                    # "ELJR", "EIJR"
+    text = re.sub(r"(?i)/\s*J-?\s?ahr\b", "/Jahr", text)                     # "/J-ahr"
     # "09. Juli 2026" -> "09.07.2026": dann gelten für solche Daten dieselben Regeln.
     text = _TEXT_DATE_RE.sub(
         lambda m: f"{int(m.group(1)):02d}.{_MONTHS[m.group(2).lower()]:02d}.{m.group(3)}", text
@@ -367,6 +369,13 @@ def find_vat(lines: Sequence[str]) -> Decimal | None:
         if re.search(r"mengenpreis|arbeitspreis|grundpreis|\bAP\b|\bGP\b", line, re.I if "AP" not in line else 0):
             if match := re.search(r"(?<![\d,])(0|5|7|16|19)\s*%", line):
                 return Decimal(match.group(1))
+    # Prozentangabe unleserlich: "Umsatzsteuer … 2.616,93 EUR 497,22 EUR" -> 497,22 / 2.616,93 = 19 %
+    for line in lines:
+        if re.search(r"umsatzsteuer|mwst", line, re.I) and len(values := _money_values(line)) >= 2 and values[-2] > 0:
+            rate = (values[-1] / values[-2] * 100).quantize(Decimal("0.1"))
+            for usual in (Decimal(19), Decimal(7), Decimal(16), Decimal(5)):
+                if abs(rate - usual) <= Decimal("0.1"):
+                    return usual
     return None
 
 
@@ -401,6 +410,8 @@ def working_prices(lines: Sequence[str]) -> list[PricedPeriod]:
     for line in lines:
         if not re.search(r"mengenpreis|arbeitspreis|verbrauchspreis|\bAP\b", line, re.I if "AP" not in line else 0):
             continue
+        if "brutto" in line.lower():  # "Ihr aktueller Arbeitspreis beträgt 11,10 ct/kWh (brutto)" - gerechnet wird netto
+            continue
         value: Decimal | None = None
         if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*{_UNIT}", line, re.I):
             value = to_decimal(match.group(1))
@@ -420,6 +431,8 @@ def base_prices(lines: Sequence[str]) -> list[PricedPeriod]:
     result: list[PricedPeriod] = []
     for line in lines:
         if "grundpreis" not in line.lower() and not re.search(r"\bGP\b", line):
+            continue
+        if "brutto" in line.lower():
             continue
         value: Decimal | None = None
         if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*(\d+)\s*tag", line, re.I):

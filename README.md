@@ -79,7 +79,7 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-353 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+354 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
 Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
