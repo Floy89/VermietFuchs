@@ -434,7 +434,6 @@ class SplitsDialog(QDialog):
     def _mark_computed(spin: DecimalSpin | MoneySpin, computed: bool) -> None:
         """Berechnete Felder sind gesperrt und grau - der Wert kommt aus den Rechengrundlagen."""
         spin.setReadOnly(computed)
-        spin.setButtonSymbols(spin.ButtonSymbols.NoButtons if computed else spin.ButtonSymbols.UpDownArrows)
         spin.setStyleSheet(f"color: {styles.color('muted')};" if computed else "")
         spin.setFocusPolicy(Qt.FocusPolicy.NoFocus if computed else Qt.FocusPolicy.StrongFocus)
 

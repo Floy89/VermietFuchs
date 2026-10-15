@@ -40,6 +40,7 @@ _ICON_BODIES: Final[Mapping[str, str]] = {
     "wallet": '<path d="M3 8V7a2 2 0 0 1 2-2h13v3"/><rect x="3" y="8" width="18" height="12" rx="2"/>'
     '<path d="M16.5 14h.01"/>',
     "report": '<path d="M6 2.5h8l4 4v15H6z"/><path d="M14 2.5v4h4"/><path d="M9 12h6M9 16h6"/>',
+    "calendar": '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
     "chart": '<path d="M4 4v16h16"/><path d="M7.5 15.5l4-5 3 2.5 4.5-6.5"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "edit": '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',

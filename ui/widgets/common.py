@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
 from typing import Any, Callable, Generic, Sequence, TypeVar
 
 from PyQt6.QtCore import (
@@ -28,8 +27,6 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDateEdit,
-    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -42,9 +39,11 @@ from PyQt6.QtWidgets import (
 
 from app_context import AppContext
 from models.property import Property
-from models.value_objects import DateRange, Money
+from models.value_objects import DateRange
 from ui import icons, styles
-from ui.helpers import FileDropFilter, fill_combo, to_date, to_qdate
+from ui.helpers import FileDropFilter, fill_combo
+from ui.widgets.date_edit import DateEdit
+from ui.widgets.number_edit import MoneyEdit, NumberEdit
 
 T = TypeVar("T")
 
@@ -323,30 +322,16 @@ def muted_label(text: str = "") -> QLabel:
 # ---------------------------------------------------------------------- #
 # Eingabefelder
 # ---------------------------------------------------------------------- #
-class MoneySpin(QDoubleSpinBox):
-    """Eingabefeld für Euro-Beträge."""
+class MoneySpin(MoneyEdit):
+    """Eingabefeld für Euro-Beträge (Textfeld, siehe :mod:`ui.widgets.number_edit`).
 
-    def __init__(self, allow_negative: bool = False, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setDecimals(2)
-        self.setRange(-9_999_999.99 if allow_negative else 0.0, 9_999_999.99)
-        self.setSuffix(" €")
-        self.setGroupSeparatorShown(True)
-        self.setSingleStep(10.0)
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-    def money(self) -> Money:
-        """Der eingegebene Betrag."""
-        # Über den Text-Umweg runden, damit aus 19.99 nicht 19.989999… wird.
-        return Money.from_decimal(f"{self.value():.2f}")
-
-    def set_money(self, money: Money) -> None:
-        """Setzt den angezeigten Betrag."""
-        self.setValue(float(money.amount))
+    Der Name stammt aus der Zeit, als hier ein Drehfeld stand; die Dialoge
+    verwenden ihn weiter.
+    """
 
 
-class DecimalSpin(QDoubleSpinBox):
-    """Eingabefeld für Dezimalzahlen (Flächen, Zählerstände)."""
+class DecimalSpin(NumberEdit):
+    """Eingabefeld für Dezimalzahlen wie Flächen, Zählerstände oder Preise (Textfeld)."""
 
     def __init__(
         self,
@@ -355,39 +340,7 @@ class DecimalSpin(QDoubleSpinBox):
         suffix: str = "",
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.setDecimals(decimals)
-        self.setRange(0.0, maximum)
-        self.setSuffix(suffix)
-        self.setGroupSeparatorShown(True)
-        self.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-    def decimal_value(self) -> Decimal:
-        """Der eingegebene Wert als ``Decimal``."""
-        return Decimal(f"{self.value():.{self.decimals()}f}")
-
-    def set_decimal(self, value: Decimal) -> None:
-        """Setzt den angezeigten Wert."""
-        self.setValue(float(value))
-
-
-class DateEdit(QDateEdit):
-    """Datumsfeld mit Kalender-Popup im Format TT.MM.JJJJ und Tastatureingabe."""
-
-    def __init__(self, value: date | None = None, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setCalendarPopup(True)
-        self.setDisplayFormat(DATE_DISPLAY_FORMAT)
-        self.setReadOnly(False)
-        self.set_value(value or date.today())
-
-    def value(self) -> date:
-        """Das gewählte Datum."""
-        return to_date(self.date())
-
-    def set_value(self, value: date) -> None:
-        """Setzt das angezeigte Datum."""
-        self.setDate(to_qdate(value))
+        super().__init__(decimals=decimals, maximum=maximum, suffix=suffix, parent=parent)
 
 
 # ---------------------------------------------------------------------- #

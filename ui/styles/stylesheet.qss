@@ -157,6 +157,10 @@ QLineEdit, QPlainTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox {
     selection-background-color: {{primary}};
     selection-color: #FFFFFF;
 }
+QLineEdit[invalid="true"] {
+    border: 1px solid {{danger}};
+}
+
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QDateEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus {
     border: 1px solid {{primary}};
