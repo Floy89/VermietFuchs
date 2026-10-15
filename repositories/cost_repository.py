@@ -106,6 +106,8 @@ class SqliteCostRepository(SqliteRepository[Cost]):
                         "amount": split.amount.cents,
                         "consumption": str(split.consumption) if split.consumption is not None else None,
                         **_calculation_to_json(split.calculation),
+                        **({"manual": True} if split.amount_corrected else {}),
+                        **({"difference": True} if split.is_difference else {}),
                     }
                     for split in entity.splits
                 ]
@@ -142,6 +144,8 @@ class SqliteCostRepository(SqliteRepository[Cost]):
                     amount=Money(raw["amount"]),
                     consumption=Decimal(raw["consumption"]) if raw["consumption"] is not None else None,
                     calculation=_calculation_from_json(raw.get("calc")),
+                    amount_corrected=bool(raw.get("manual", False)),
+                    is_difference=bool(raw.get("difference", False)),
                 )
                 for raw in json.loads(row["splits"] or "[]")
             ],

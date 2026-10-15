@@ -12,10 +12,12 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from PyQt6.QtWidgets import QApplication
 
 from app_context import AppContext
-from models.cost import Cost, InvoiceSplit
+from models.cost import Cost, InvoiceSplit, uncovered_periods, validate_splits
+from models.exceptions import ValidationError
 from models.enums import AllocationKey
 from models.property import Property
 from models.tariff import SplitCalculation, fit_amounts, year_fraction
@@ -25,6 +27,7 @@ from ui.dialogs.splits_dialog import (
     _COL_CALORIFIC,
     _COL_CONDITION,
     _COL_CONSUMPTION,
+    _COL_FROM,
     _COL_VOLUME,
     _COL_WORKING_PRICE,
     SplitsDialog,
@@ -162,6 +165,129 @@ class TestBasePricePer365Days:
         assert again._fixed_days_check.isChecked()
 
 
+class TestCorrections:
+    """Berechnete Beträge von Hand korrigieren und Differenz-Einträge."""
+
+    def _dialog(self, splits: list[InvoiceSplit] | None = None) -> SplitsDialog:
+        return SplitsDialog(INVOICE_PERIOD, INVOICE_AMOUNT, Decimal("39135"), "kWh", _splits() if splits is None else splits)
+
+    def test_manual_correction_is_flagged_and_can_be_restored(self, qt_app: QApplication) -> None:
+        dialog = self._dialog()
+        assert not dialog._restore_button.isEnabled()
+
+        amount = dialog._amount_spin(0)
+        amount.setFocus()
+        amount.setText("125,00")
+        amount.textEdited.emit("125,00")
+
+        assert dialog._is_manual(0) and dialog._restore_button.isEnabled()
+        assert "berechnet wären 122,13" in amount.toolTip()
+        assert amount.money() == Money.from_decimal("125.00")  # wird nicht überschrieben
+        # Die anderen Zeilen behalten ihre Beträge - die Korrektur bleibt als Differenz sichtbar.
+        assert [dialog._amount_spin(row).money() for row in (1, 2, 3)] == [
+            Money.from_decimal(amount) for *_rest, amount in ROWS[1:]
+        ]
+        assert dialog._read_splits()[0].amount_corrected
+        assert "von Hand korrigiert" in dialog._status.text()
+        assert dialog._check() is not None  # Summe stimmt jetzt nicht mehr
+
+        dialog._table.setCurrentCell(0, 0)
+        dialog._restore_calculation()
+
+        assert not dialog._is_manual(0) and amount.money() == Money.from_decimal("122.13")
+        assert dialog._check() is None and not dialog._restore_button.isEnabled()
+
+    def test_correction_survives_saving_and_reopening(self, qt_app: QApplication, context: AppContext) -> None:
+        splits = _splits()
+        splits[0] = InvoiceSplit(splits[0].period, Money.from_decimal("122.10"), splits[0].consumption,
+                                 splits[0].calculation, amount_corrected=True)
+        splits[1] = InvoiceSplit(splits[1].period, Money.from_decimal("291.90"), splits[1].consumption,
+                                 splits[1].calculation, amount_corrected=True)
+        house = context.properties.save_property(Property(name="Korrekturhaus", address="Weg 5, 12345 Ort"))
+        assert house.id is not None
+        context.costs.save_cost(
+            Cost(house.id, context.cost_types.get_by_name("Brennstoffkosten (Gas/Öl)"), INVOICE_AMOUNT, INVOICE_PERIOD,
+                 AllocationKey.CONSUMPTION_AREA, consumption=Decimal("39135"), consumption_unit="kWh", splits=splits)
+        )
+        (stored,) = context.costs.list_costs(house.id)
+        assert [s.amount_corrected for s in stored.splits] == [True, True, False, False]
+
+        dialog = self._dialog(stored.splits)
+        # Die korrigierten Beträge bleiben; die übrigen werden auf den Rest abgestimmt.
+        assert dialog._amount_spin(0).money() == Money.from_decimal("122.10")
+        assert dialog._is_manual(0) and not dialog._is_manual(2)
+        assert dialog._check() is None
+
+    def test_difference_entry(self, qt_app: QApplication) -> None:
+        # Preise ergeben 5 Cent weniger als die Rechnung - ohne Rechnungsbetrag-Abgleich.
+        manual = [InvoiceSplit(s.period, s.amount, s.consumption) for s in _splits()]
+        manual[0] = InvoiceSplit(manual[0].period, manual[0].amount - Money(5), manual[0].consumption)
+        dialog = self._dialog(manual)
+        assert dialog._check() is not None and dialog._difference_button.isEnabled()
+
+        dialog._add_difference()
+
+        assert dialog._check() is None, dialog._status.text()
+        (difference,) = [s for s in dialog._read_splits() if s.is_difference]
+        assert difference == InvoiceSplit(INVOICE_PERIOD, Money(5), is_difference=True)
+        assert "linear über den ganzen Zeitraum" in dialog._status.text()
+        assert not dialog._difference_button.isEnabled()
+        row = dialog._table.rowCount() - 1
+        assert not dialog._table.cellWidget(row, _COL_FROM).isEnabled()  # Zeitraum fest: ganze Rechnung
+
+    def test_small_correction_becomes_a_difference_entry(self, qt_app: QApplication) -> None:
+        dialog = self._dialog()
+        amount = dialog._amount_spin(0)
+        amount.setText("122,10")
+        amount.textEdited.emit("122,10")  # 3 Cent weniger als berechnet
+
+        assert dialog._difference_button.isEnabled()
+        dialog._add_difference()
+
+        assert dialog._check() is None
+        assert [s.amount for s in dialog._read_splits() if s.is_difference] == [Money(3)]
+
+    def test_negative_difference(self, qt_app: QApplication) -> None:
+        manual = [InvoiceSplit(s.period, s.amount, s.consumption) for s in _splits()]
+        manual[0] = InvoiceSplit(manual[0].period, manual[0].amount + Money(3), manual[0].consumption)
+        dialog = self._dialog(manual)
+        dialog._add_difference()
+        assert dialog._check() is None
+        assert [s.amount for s in dialog._read_splits() if s.is_difference] == [Money(-3)]
+
+
+class TestDifferenceInBilling:
+    def test_difference_is_spread_by_days_over_the_splits(self, context: AppContext) -> None:
+        regular = [InvoiceSplit(DateRange(date(2025, 1, 1), date(2025, 6, 30)), Money(10000)),
+                   InvoiceSplit(DateRange(date(2025, 7, 1), date(2026, 6, 30)), Money(20000))]
+        invoice_period = DateRange(date(2025, 1, 1), date(2026, 6, 30))
+        difference = InvoiceSplit(invoice_period, Money(-6), is_difference=True)
+        gas = context.cost_types.get_by_name("Brennstoffkosten (Gas/Öl)")
+
+        with_difference = Cost(1, gas, Money(29994), invoice_period, AllocationKey.AREA, splits=[*regular, difference])
+        without = Cost(1, gas, Money(30000), invoice_period, AllocationKey.AREA, splits=regular)
+        part_2025, part_2026 = (with_difference.prorate(DateRange.for_year(y)) for y in (2025, 2026))
+        before_2025 = without.prorate(DateRange.for_year(2025))
+
+        assert part_2025 is not None and part_2026 is not None and before_2025 is not None
+        assert part_2025.amount + part_2026.amount == Money(29994)
+        # 2025 sind 365 der 546 Tage: rund 4 der 6 Cent Abzug landen dort, der Rest 2026.
+        assert before_2025.amount - part_2025.amount == Money(4)
+        # Kein eigenes (negatives) Stück in der Kostenverteilung.
+        assert all(piece.amount.cents > 0 for piece in with_difference.pieces(DateRange.for_year(2025)))
+
+    def test_rules(self) -> None:
+        period = DateRange(date(2025, 1, 1), date(2025, 12, 31))
+        regular = InvoiceSplit(period, Money(100))
+        with pytest.raises(ValidationError, match="ganzen Rechnungszeitraum"):
+            validate_splits([regular, InvoiceSplit(DateRange(date(2025, 1, 1), date(2025, 6, 30)), Money(1), is_difference=True)],
+                            period, Money(101), None)
+        with pytest.raises(ValidationError, match="nur einen Differenz"):
+            validate_splits([regular, InvoiceSplit(period, Money(1), is_difference=True),
+                             InvoiceSplit(period, Money(1), is_difference=True)], period, Money(102), None)
+        assert uncovered_periods([InvoiceSplit(period, Money(1), is_difference=True)], period) == []
+
+
 class TestInBilling:
     def _invoice(self, context: AppContext) -> Cost:
         house = context.properties.save_property(Property(name="Gashaus", address="Am Brenner 1, 12345 Heizstadt"))
@@ -256,8 +382,8 @@ class TestDialog:
             (Decimal(kwh), Money.from_decimal(amount)) for *_rest, kwh, amount in ROWS
         ]
         assert dialog.splits == _splits()
-        # Berechnete Felder sind gesperrt.
-        assert dialog._spin(0, _COL_CONSUMPTION).isReadOnly() and dialog._amount_spin(0).isReadOnly()
+        # Der berechnete Verbrauch ist gesperrt, der Betrag bleibt für Korrekturen editierbar.
+        assert dialog._spin(0, _COL_CONSUMPTION).isReadOnly() and not dialog._amount_spin(0).isReadOnly()
 
     def test_totals_can_be_taken_from_the_calculation(self, qt_app: QApplication) -> None:
         # Der Benutzer hat weder Gesamtbetrag noch Gesamtverbrauch eingetragen.

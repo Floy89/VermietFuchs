@@ -79,7 +79,7 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-359 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+366 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
 Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
@@ -365,6 +365,16 @@ statt "151,20"), wird er korrigiert.
 (2024: 1/366 je Tag), andere starr mit 1/365 ("153,00 Euro / 365 Tage"). Der Split-Dialog hat
 dafür den Haken *Grundpreis je 365 Tage (auch im Schaltjahr)*; beim Auslesen wird er anhand der
 Rechnung gesetzt. Arbeits- und Grundpreisanteil werden wie auf Rechnungen je auf Cent gerundet.
+
+**Beträge korrigieren:** Ein berechneter Split-Betrag lässt sich im Split-Dialog überschreiben. Die
+Zeile wird dann farbig als *von Hand korrigiert* markiert (Tooltip: berechneter Wert), beim
+Speichern gemerkt und nicht mehr neu berechnet. **Berechnung wiederherstellen** setzt die
+markierte Zeile (ohne Auswahl: alle korrigierten) zurück. Eine Korrektur verschiebt keine Cent in
+andere Zeilen - der Unterschied zur Rechnung bleibt sichtbar.
+
+**Differenz als Eintrag:** Bleibt ein Restbetrag (meist Rundungscent), trägt dieser Knopf ihn als
+eigenen Eintrag ein. Er gilt für den ganzen Rechnungszeitraum, hat keinen Verbrauch, darf negativ
+sein und wird bei der Jahreszuordnung linear nach Tagen auf die übrigen Splits verteilt.
 
 Grenzen: Die Regeln sind auf deutsche Versorger- und Gebührenrechnungen zugeschnitten. Bei
 schlechten Fotos liest die Texterkennung Ziffern falsch - darum werden die Werte nur

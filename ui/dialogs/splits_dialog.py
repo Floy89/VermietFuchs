@@ -51,6 +51,10 @@ _PRICE_DECIMALS = 8
 _DEFAULT_VAT = Decimal(19)
 #: Spalten, die nur für die Umrechnung von Gasvolumen in kWh gebraucht werden.
 _VOLUME_COLUMNS = (_COL_VOLUME, _COL_CONDITION, _COL_CALORIFIC)
+#: Eigenschaft am Betragsfeld: Betrag von Hand korrigiert.
+_MANUAL = "manualCorrection"
+#: Eigenschaft am Betragsfeld: Differenz-Eintrag (ganzer Zeitraum, linear verteilt).
+_DIFFERENCE = "differenceEntry"
 
 
 def _optional(value: Decimal) -> Decimal | None:
@@ -161,7 +165,8 @@ class SplitsDialog(QDialog):
             muted_label(
                 f"Grau = berechnet: {volume_text}der Betrag aus (Verbrauch × Arbeitspreis + Grundpreis × Tage "
                 "des Abschnitts / Tage des Jahres) × (1 + USt), beide Preisanteile wie auf Rechnungen je auf "
-                "Cent gerundet. Preisfelder leer lassen (0), um den Betrag selbst einzutragen."
+                "Cent gerundet. Ein berechneter Betrag lässt sich überschreiben (farbig = von Hand korrigiert); "
+                "Preisfelder leer lassen (0), um Beträge ganz selbst einzutragen."
             )
         )
 
@@ -176,10 +181,23 @@ class SplitsDialog(QDialog):
             "Summen als Rechnungssummen übernehmen",
             tooltip="Setzt Gesamtbetrag und Gesamtverbrauch der Rechnung auf die Summen der Splits",
         )
+        self._restore_button = make_button(
+            "Berechnung wiederherstellen",
+            tooltip="Ersetzt von Hand korrigierte Beträge wieder durch die aus den Preisen berechneten "
+            "(markierte Zeile, sonst alle korrigierten)",
+        )
+        self._restore_button.setEnabled(False)
+        self._difference_button = make_button(
+            "Differenz als Eintrag",
+            tooltip="Trägt den Unterschied zwischen Rechnungsbetrag und Summe der Splits als eigenen Eintrag "
+            "ein. Er wird linear über den ganzen Rechnungszeitraum verteilt - gedacht für Rundungscent.",
+        )
         self._ok_button = make_button("Übernehmen", variant="primary")
         cancel_button = make_button("Abbrechen")
         buttons = QHBoxLayout()
-        for button in (add_button, remove_button, clear_button, self._adopt_button):
+        for button in (
+            add_button, remove_button, clear_button, self._adopt_button, self._restore_button, self._difference_button,
+        ):
             buttons.addWidget(button)
         buttons.addStretch(1)
         buttons.addWidget(self._ok_button)
@@ -190,6 +208,8 @@ class SplitsDialog(QDialog):
         remove_button.clicked.connect(self._remove_selected)
         clear_button.clicked.connect(self._clear)
         self._adopt_button.clicked.connect(self._adopt_sums)
+        self._restore_button.clicked.connect(self._restore_calculation)
+        self._difference_button.clicked.connect(self._add_difference)
         self._ok_button.clicked.connect(self._accept_if_valid)
         cancel_button.clicked.connect(self.reject)
 
@@ -315,6 +335,9 @@ class SplitsDialog(QDialog):
         working_price_spin.set_decimal(calculation.working_price or Decimal(0))
         base_price_spin.set_decimal(calculation.base_price or Decimal(0))
         amount_spin.set_money(split.amount)
+        # Von Hand korrigierter Betrag: wird nicht mehr aus den Preisen überschrieben.
+        amount_spin.setProperty(_MANUAL, bool(split.amount_corrected))
+        amount_spin.setProperty(_DIFFERENCE, bool(split.is_difference))
 
         widgets = (
             from_edit, to_edit, volume_spin, condition_spin, calorific_spin,
@@ -324,10 +347,20 @@ class SplitsDialog(QDialog):
             if column not in (_COL_FROM, _COL_TO):
                 widget.setSpecialValueText("–")  # 0 = nicht angegeben
             self._table.setCellWidget(row, column, widget)
+        if split.is_difference:
+            # Differenz: gilt für den ganzen Zeitraum, nur der Betrag ist einzutragen (auch negativ).
+            amount_spin.setRange(-999_999_999.0, 999_999_999.0)
+            amount_spin.set_money(split.amount)
+            hint = "Differenz-Eintrag: wird linear über den ganzen Rechnungszeitraum verteilt"
+            for widget in widgets[:-1]:
+                widget.setEnabled(False)
+                widget.setToolTip(hint)
+            amount_spin.setToolTip(hint)
         from_edit.dateChanged.connect(lambda *_: self._recalculate())
         to_edit.dateChanged.connect(lambda *_: self._recalculate())
-        for spin in widgets[2:]:
+        for spin in widgets[2:-1]:
             spin.valueChanged.connect(lambda *_: self._recalculate())
+        amount_spin.valueChanged.connect(lambda *_, spin=amount_spin: self._amount_edited(spin))
         self._table.selectRow(row)
         self._recalculate()
 
@@ -379,6 +412,9 @@ class SplitsDialog(QDialog):
         """Liest die Zeilen aus. Zeilen mit Ende vor Beginn werden übersprungen (und gemeldet)."""
         result: list[InvoiceSplit] = []
         for row in range(self._table.rowCount()):
+            if self._is_difference(row):
+                result.append(InvoiceSplit(self._period, self._amount_spin(row).money(), is_difference=True))
+                continue
             period = self._row_period(row)
             if period is None:
                 continue
@@ -392,6 +428,7 @@ class SplitsDialog(QDialog):
                     self._amount_spin(row).money(),
                     consumption if has_consumption else None,
                     None if calculation.is_empty else calculation,
+                    amount_corrected=self._is_manual(row) and calculation.has_prices,
                 )
             )
         return result
@@ -409,14 +446,27 @@ class SplitsDialog(QDialog):
         self._recalculate()
 
     def _recalculate(self) -> None:
-        """Rechnet Verbrauch und Betrag der Zeilen neu, für die Rechengrundlagen eingetragen sind."""
+        """Rechnet Verbrauch und Betrag der Zeilen neu, für die Rechengrundlagen eingetragen sind.
+
+        Von Hand korrigierte Beträge und der Differenz-Eintrag bleiben stehen.
+        Die übrigen berechneten Zeilen werden so abgestimmt, als gäbe es keine
+        Korrektur: Eine Korrektur verschiebt keine Cent in andere Zeilen, sie
+        bleibt als Differenz sichtbar (und lässt sich als Eintrag erfassen).
+        """
         if self._updating:
             return
         self._updating = True
         try:
             priced_rows: list[int] = []
             exact_amounts: list[Decimal] = []
+            all_exact: list[Decimal] = []
+            #: Die korrigierten Zeilen, wie sie ohne Korrektur berechnet wären.
+            manual_computed = Decimal(0)
+            manual_rows = 0
             for row in range(self._table.rowCount()):
+                if self._is_difference(row):
+                    manual_rows += 1  # zählt für den Abgleich nicht mit
+                    continue
                 calculation = self._row_calculation(row)
                 consumption_spin = self._spin(row, _COL_CONSUMPTION)
                 energy = calculation.energy()
@@ -428,20 +478,86 @@ class SplitsDialog(QDialog):
                 exact = (
                     calculation.gross_cost(period, consumption_spin.decimal_value()) if period is not None else None
                 )
-                self._mark_computed(self._amount_spin(row), exact is not None)
-                if exact is not None:
+                amount_spin = self._amount_spin(row)
+                if exact is None:
+                    amount_spin.setProperty(_MANUAL, False)  # ohne Preise ist jeder Betrag eine Eingabe
+                self._mark_amount(amount_spin, exact)
+                if exact is None:
+                    continue
+                all_exact.append(exact)
+                if self._is_manual(row):
+                    manual_computed += exact
+                    manual_rows += 1
+                else:
                     priced_rows.append(row)
                     exact_amounts.append(exact)
 
-            # An den Rechnungsbetrag anpassen geht nur, wenn *alle* Zeilen berechnet sind.
-            all_priced = len(priced_rows) == self._table.rowCount()
-            amounts = fit_amounts(exact_amounts, self.invoice_amount if all_priced else None)
+            # An den Rechnungsbetrag anpassen geht nur, wenn *alle* Zeilen berechnet (oder korrigiert) sind.
+            all_priced = len(priced_rows) + manual_rows == self._table.rowCount()
+            target = None
+            if all_priced and not self.invoice_amount.is_zero:
+                target = self.invoice_amount - Money.from_decimal(manual_computed)
+            amounts = fit_amounts(exact_amounts, target)
             for row, amount in zip(priced_rows, amounts):
                 self._amount_spin(row).set_money(amount)
-            self._computed_total = sum(exact_amounts, Decimal(0)) if all_priced and priced_rows else None
+            self._computed_total = sum(all_exact, Decimal(0)) if all_priced and all_exact else None
+            self._restore_button.setEnabled(any(self._is_manual(row) for row in range(self._table.rowCount())))
         finally:
             self._updating = False
         self._update_status()
+
+    def _is_difference(self, row: int) -> bool:
+        """``True`` für den Differenz-Eintrag."""
+        return bool(self._amount_spin(row).property(_DIFFERENCE))
+
+    def _add_difference(self) -> None:
+        """Trägt den noch fehlenden Betrag als Differenz-Eintrag ein (bzw. erhöht einen vorhandenen)."""
+        missing = self.invoice_amount - sum((s.amount for s in self._read_splits()), Money.zero())
+        if missing.is_zero:
+            return
+        for row in range(self._table.rowCount()):
+            if self._is_difference(row):
+                spin = self._amount_spin(row)
+                spin.set_money(spin.money() + missing)
+                self._recalculate()
+                return
+        self._add_row(InvoiceSplit(self._period, missing, is_difference=True))
+
+    def _is_manual(self, row: int) -> bool:
+        """``True``, wenn der Betrag dieser Zeile von Hand korrigiert wurde."""
+        return bool(self._amount_spin(row).property(_MANUAL))
+
+    def _amount_edited(self, spin: MoneySpin) -> None:
+        """Der Benutzer tippt einen Betrag: In einer berechneten Zeile ist das eine Korrektur."""
+        if self._updating:
+            return
+        if not spin.property(_DIFFERENCE):
+            spin.setProperty(_MANUAL, True)
+        self._recalculate()
+
+    def _restore_calculation(self) -> None:
+        """Stellt den berechneten Betrag wieder her - für die markierte Zeile, sonst für alle korrigierten."""
+        row = self._table.currentRow()
+        rows = [row] if row >= 0 and self._is_manual(row) else range(self._table.rowCount())
+        for index in rows:
+            self._amount_spin(index).setProperty(_MANUAL, False)
+        self._recalculate()
+
+    def _mark_amount(self, spin: MoneySpin, exact: Decimal | None) -> None:
+        """Betragsfeld: grau = berechnet, farbig = von Hand korrigiert, normal = eigene Eingabe."""
+        if exact is None:
+            spin.setStyleSheet("")
+            spin.setToolTip("")
+        elif spin.property(_MANUAL):
+            computed = Money.from_decimal(exact)
+            spin.setStyleSheet(f"color: {styles.color('warning_text')}; font-weight: 600;")
+            spin.setToolTip(
+                f"Von Hand korrigiert – aus den Preisen berechnet wären {format_money(computed)}. "
+                "„Berechnung wiederherstellen“ setzt den berechneten Betrag wieder ein."
+            )
+        else:
+            spin.setStyleSheet(f"color: {styles.color('muted')};")
+            spin.setToolTip("Aus den Preisen berechnet. Überschreiben, um den Betrag von Hand zu korrigieren.")
 
     @staticmethod
     def _mark_computed(spin: DecimalSpin | MoneySpin, computed: bool) -> None:
@@ -480,11 +596,13 @@ class SplitsDialog(QDialog):
         splits = self._read_splits()
         self._adopt_button.setEnabled(bool(splits))
         if self._table.rowCount() == 0:
+            self._difference_button.setEnabled(False)
             self._status.setText("Keine Splits – die Rechnung wird taggenau linear verteilt.")
             self._status.setStyleSheet(f"color: {styles.color('muted')};")
             return
 
         amount_sum = sum((s.amount for s in splits), Money.zero())
+        self._difference_button.setEnabled(not self.invoice_amount.is_zero and amount_sum != self.invoice_amount)
         text = f"Summe Beträge: {format_money(amount_sum)} von {format_money(self.invoice_amount)}"
         consumption_sum = sum((s.consumption or Decimal(0) for s in splits), Decimal(0))
         if self.invoice_consumption is not None:
@@ -505,6 +623,13 @@ class SplitsDialog(QDialog):
                     f" – {format_money(abs(difference))} Rundungsdifferenz zur Rechnung, "
                     "auf den Rechnungsbetrag verteilt"
                 )
+
+        corrected = sum(1 for split in splits if split.amount_corrected)
+        if corrected:
+            text += f"\n✎ {corrected} Betrag/Beträge von Hand korrigiert (farbig markiert)"
+        difference = next((split for split in splits if split.is_difference), None)
+        if difference is not None:
+            text += f"\nDifferenz-Eintrag {format_money(difference.amount)} - linear über den ganzen Zeitraum verteilt"
 
         error = self._check()
         # Nicht abgedeckte Tage immer nennen - auch wenn die Summen (noch) nicht

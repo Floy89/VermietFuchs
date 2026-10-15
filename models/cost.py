@@ -55,12 +55,22 @@ class InvoiceSplit:
             berechnet wurden (Gasvolumen, Preise). Für die Abrechnung zählen
             allein ``amount`` und ``consumption``; die Rechengrundlagen werden
             nur aufbewahrt, damit sie beim nächsten Bearbeiten wieder dastehen.
+        amount_corrected: ``True``, wenn der Benutzer den aus Preisen berechneten
+            Betrag von Hand überschrieben hat. Der Split-Dialog rechnet ihn dann
+            nicht mehr neu, bis die Berechnung ausdrücklich wiederhergestellt wird.
+        is_difference: ``True`` für einen Differenz-Eintrag: ein (meist kleiner)
+            Restbetrag, der nicht zu einem Abschnitt gehört - z. B. Rundungs-
+            differenzen des Versorgers. Er gilt für den ganzen Rechnungszeitraum,
+            hat keinen Verbrauch, darf negativ sein und wird bei der
+            Jahreszuordnung linear (nach Tagen) auf die übrigen Splits verteilt.
     """
 
     period: DateRange
     amount: Money
     consumption: Decimal | None = None
     calculation: SplitCalculation | None = None
+    amount_corrected: bool = False
+    is_difference: bool = False
 
 
 def validate_splits(
@@ -88,7 +98,16 @@ def validate_splits(
     if not splits:
         return
 
-    ordered = sorted(splits, key=lambda split: split.period.start)
+    differences = [split for split in splits if split.is_difference]
+    if len(differences) > 1:
+        raise ValidationError("Es darf nur einen Differenz-Eintrag geben.")
+    for difference in differences:
+        if difference.period != invoice_period:
+            raise ValidationError("Der Differenz-Eintrag muss den ganzen Rechnungszeitraum umfassen.")
+        if difference.consumption is not None:
+            raise ValidationError("Der Differenz-Eintrag hat keinen Verbrauch.")
+
+    ordered = sorted((split for split in splits if not split.is_difference), key=lambda split: split.period.start)
     for index, split in enumerate(ordered):
         label = f"Split {index + 1} ({_short(split.period)})"
         if not invoice_period.encloses(split.period):
@@ -100,7 +119,7 @@ def validate_splits(
         if index > 0 and ordered[index - 1].period.overlaps(split.period):
             raise ValidationError(f"{label} überschneidet sich mit dem vorherigen Split.")
 
-    amount_sum = sum((split.amount for split in ordered), Money.zero())
+    amount_sum = sum((split.amount for split in splits), Money.zero())
     if amount_sum != invoice_amount:
         difference = invoice_amount - amount_sum
         raise ValidationError(
@@ -140,6 +159,7 @@ def uncovered_periods(splits: Sequence[InvoiceSplit], invoice_period: DateRange)
         Die Lücken in zeitlicher Reihenfolge; leer, wenn es keine Splits gibt
         (dann wird linear verteilt) oder die Splits lückenlos anschließen.
     """
+    splits = [split for split in splits if not split.is_difference]
     if not splits:
         return []
     one_day = timedelta(days=1)
@@ -340,8 +360,9 @@ class Cost:
         # Ein einziger Split über den ganzen Rechnungszeitraum (z. B. um Verbrauch
         # und Kosten aus Volumen und Preisen berechnen zu lassen) teilt nichts
         # auf - die Rechnung verhält sich dann wie eine ohne Splits.
-        covers_everything = len(self.splits) == 1 and self.splits[0].period == self.period
-        if not self.splits or covers_everything:
+        splits = self._splits_with_difference_spread()
+        covers_everything = len(splits) == 1 and splits[0].period == self.period
+        if not splits or covers_everything:
             overlap = self.period.intersection(billing_period)
             if overlap is None:
                 return []
@@ -350,11 +371,24 @@ class Cost:
             return [self._cut(self.period, overlap, self.amount, self.consumption, split_period=None)]
 
         result: list[Cost] = []
-        for split in self.splits:
+        for split in splits:
             overlap = split.period.intersection(billing_period)
             if overlap is not None:
                 result.append(self._cut(split.period, overlap, split.amount, split.consumption, split.period))
         return result
+
+    def _splits_with_difference_spread(self) -> list[InvoiceSplit]:
+        """Die Splits ohne Differenz-Eintrag - dessen Betrag ist nach Tagen auf sie verteilt.
+
+        So wird die Differenz linear über den Zeitraum gestreckt, ohne als
+        eigenes (womöglich negatives) Stück in die Kostenverteilung zu gehen.
+        """
+        regular = [split for split in self.splits if not split.is_difference]
+        difference = sum((split.amount for split in self.splits if split.is_difference), Money.zero())
+        if difference.is_zero or not regular:
+            return regular
+        shares = difference.allocate([split.period.days for split in regular])
+        return [replace(split, amount=split.amount + share) for split, share in zip(regular, shares)]
 
     def prorate(self, billing_period: DateRange) -> Cost | None:
         """Der Teil der Rechnung im Abrechnungszeitraum als *eine* Summe.

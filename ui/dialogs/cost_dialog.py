@@ -583,9 +583,13 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
     def _update_splits_label(self) -> None:
         """Zeigt, ob und wie viele Splits hinterlegt sind."""
         if self._splits:
-            self._splits_label.setText(
-                f"{len(self._splits)} Split(s) hinterlegt – die Jahreszuordnung folgt den Splits."
-            )
+            text = f"{len(self._splits)} Split(s) hinterlegt – die Jahreszuordnung folgt den Splits."
+            corrected = sum(1 for split in self._splits if split.amount_corrected)
+            if corrected:
+                text += f" {corrected} Betrag/Beträge von Hand korrigiert."
+            if any(split.is_difference for split in self._splits):
+                text += " Mit Differenz-Eintrag (linear verteilt)."
+            self._splits_label.setText(text)
         else:
             self._splits_label.setText("Keine – die Rechnung wird taggenau linear verteilt.")
 
