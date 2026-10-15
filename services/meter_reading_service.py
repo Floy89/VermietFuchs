@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from models.enums import MeterType, PhotoCategory
-from models.meter_reading import MeterReading, calculate_consumption
+from models.meter_reading import MeterReading, calculate_consumption, reading_pair, readings_enclose
 from models.photo import Photo
 from models.value_objects import DateRange
 from repositories.interfaces import (
@@ -103,11 +103,17 @@ class MeterReadingService:
         property_id: int,
         meter_type: MeterType,
         period: DateRange,
+        covering: DateRange | None = None,
     ) -> dict[int, Decimal]:
         """Verbrauch je Wohnung einer Immobilie im angegebenen Zeitraum.
 
         Wohnungen, deren Verbrauch sich nicht bestimmen lässt (zu wenige
         Ablesungen), fehlen im Ergebnis.
+
+        Args:
+            covering: Nur Wohnungen, deren verwendete Ablesungen diesen
+                (kürzeren) Zeitraum umschließen - z. B. einen Split, für den
+                ersatzweise der Verbrauch eines längeren Zeitraums gilt.
         """
         readings_by_apartment: dict[int, list[MeterReading]] = defaultdict(list)
         for reading in self._readings.list_for_property_and_type(property_id, meter_type):
@@ -115,6 +121,10 @@ class MeterReadingService:
 
         result: dict[int, Decimal] = {}
         for apartment_id, readings in readings_by_apartment.items():
+            if covering is not None:
+                pair = reading_pair(readings, period)
+                if pair is None or not readings_enclose(pair, covering):
+                    continue
             consumption = calculate_consumption(readings, period)
             if consumption is not None:
                 result[apartment_id] = consumption

@@ -56,6 +56,19 @@ def calculate_consumption(readings: Sequence[MeterReading], period: DateRange) -
         (weniger als zwei passende Ablesungen oder ein rückläufiger Zähler,
         etwa nach einem Zählerwechsel).
     """
+    pair = reading_pair(readings, period)
+    if pair is None:
+        return None
+    consumption = pair[1].value - pair[0].value
+    return consumption if consumption >= 0 else None
+
+
+def reading_pair(readings: Sequence[MeterReading], period: DateRange) -> tuple[MeterReading, MeterReading] | None:
+    """Anfangs- und Endablesung, aus denen der Verbrauch im Zeitraum berechnet wird.
+
+    Regeln wie bei :func:`calculate_consumption`. ``None``, wenn es keine zwei
+    verschiedenen passenden Ablesungen gibt.
+    """
     ordered = sorted(readings, key=lambda reading: reading.date)
     tolerance = timedelta(days=READING_TOLERANCE_DAYS)
 
@@ -76,8 +89,10 @@ def calculate_consumption(readings: Sequence[MeterReading], period: DateRange) -
     # Dieselbe Ablesung als Anfang und Ende heißt: Es fehlt ein zweiter Wert.
     if end_reading is start_reading or end_reading.date <= start_reading.date:
         return None
+    return start_reading, end_reading
 
-    consumption = end_reading.value - start_reading.value
-    if consumption < 0:
-        return None
-    return consumption
+
+def readings_enclose(pair: tuple[MeterReading, MeterReading], period: DateRange) -> bool:
+    """``True``, wenn die beiden Ablesungen ``period`` umschließen (mit der üblichen Toleranz)."""
+    tolerance = timedelta(days=READING_TOLERANCE_DAYS)
+    return pair[0].date <= period.start + tolerance and pair[1].date >= period.end - tolerance

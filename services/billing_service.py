@@ -152,7 +152,7 @@ class BillingService:
         for cost in result.costs:
             overrides = self._overrides_for(cost, all_overrides)
             needs_consumption = AllocationKey.CONSUMPTION in overrides.values()
-            consumption = self._consumption_for(cost, apartments, result, force=needs_consumption)
+            consumption = self._consumption_for(cost, apartments, result, period, force=needs_consumption)
             allocation = self._allocator.allocate(cost, apartments, billed_tenants, consumption, overrides)
             result.vacancy_amount += allocation.vacancy_amount
             result.deviation_amount += allocation.deviation_amount
@@ -258,11 +258,21 @@ class BillingService:
         cost: Cost,
         apartments: list[Apartment],
         result: BillingResult,
+        billing_period: DateRange | None = None,
         force: bool = False,
     ) -> dict[int, Decimal]:
         """Ermittelt die Verbrauchswerte, falls die Position welche benötigt.
 
+        Fehlen für den Zeitraum eines Splits die Ablesungen (z. B. kein
+        Zählerstand zum Ablesetermin des Versorgers), wird der Split in den
+        übergeordneten Zeitraum zusammengezogen: erst der Teil der Rechnung im
+        Abrechnungszeitraum, dann der ganze Abrechnungszeitraum. Dessen
+        Verbrauch je Wohnung wird nach Tagen auf den Split umgerechnet - die
+        Verhältnisse der Wohnungen zueinander bleiben die des größeren
+        Zeitraums. Erst wenn auch das nicht geht, greift die Wohnfläche.
+
         Args:
+            billing_period: Der Abrechnungszeitraum (für das Zusammenziehen).
             force: Auch dann laden, wenn der Schlüssel der Rechnung keinen
                 Verbrauch braucht - weil ein Mieter abweichend nach Verbrauch
                 abgerechnet wird.
@@ -271,9 +281,34 @@ class BillingService:
         if meter_type is None or (cost.allocation_key not in _CONSUMPTION_KEYS and not force):
             return {}
 
-        consumption = self._meter_readings.consumption_by_apartment(
-            cost.property_id, meter_type, cost.period
-        )
+        candidates = [cost.period]
+        if billing_period is not None:
+            if cost.full_period is not None and (invoice_part := cost.full_period.intersection(billing_period)):
+                candidates.append(invoice_part)
+            candidates.append(billing_period)
+        consumption: dict[int, Decimal] = {}
+        for reference in dict.fromkeys(candidates):  # Reihenfolge behalten, doppelte weg
+            if not reference.encloses(cost.period):
+                continue
+            # Ein größerer Zeitraum zählt nur, wenn seine Ablesungen den Split wirklich umschließen.
+            covering = cost.period if reference != cost.period else None
+            consumption = self._meter_readings.consumption_by_apartment(
+                cost.property_id, meter_type, reference, covering
+            )
+            if not consumption:
+                continue
+            if reference != cost.period:
+                factor = Decimal(cost.period.days) / Decimal(reference.days)
+                consumption = {
+                    apartment_id: (value * factor).quantize(Decimal("0.001"))
+                    for apartment_id, value in consumption.items()
+                }
+                result.warnings.append(
+                    f"'{cost.title}': Für den Abschnitt {format_period(cost.period)} fehlen "
+                    f"{meter_type.label}-Zählerstände - verteilt nach dem Verbrauch im Zeitraum "
+                    f"{format_period(reference)}."
+                )
+            break
         # Fehlen nur für *einzelne* Wohnungen Werte, wird deren Verbrauch als
         # 0 gewertet. Das ist fast immer ein Erfassungsfehler - also melden.
         if consumption:
