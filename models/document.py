@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -12,6 +13,15 @@ from models.value_objects import DateRange, Money
 
 #: Felder, deren Fundstelle im Beleg gelernt werden kann.
 LEARNABLE_FIELDS: tuple[str, ...] = ("amount", "invoice_date", "period_start", "period_end", "consumption")
+
+#: Anzeigenamen der lernbaren Felder.
+FIELD_LABELS: dict[str, str] = {
+    "amount": "Rechnungsbetrag",
+    "invoice_date": "Rechnungsdatum",
+    "period_start": "Zeitraum von",
+    "period_end": "Zeitraum bis",
+    "consumption": "Verbrauch",
+}
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,17 @@ class FieldAnchor:
 
     pattern: str
     index: int = 0
+
+    def describe(self, kind: str) -> str:
+        """Lesbare Beschreibung, z. B. ``„Rechnungsbetrag ‹Zahl› Euro“, 1. Zahl``.
+
+        Args:
+            kind: "number" oder "date" - was an der Stelle ``index`` steht.
+        """
+        line = re.sub(r"(?<![\w])d(?![\w])", "‹Datum›", self.pattern)
+        line = line.replace("#", "‹Zahl›")
+        line = line[:1].upper() + line[1:]
+        return f"„{line}“, {self.index + 1}. {'Datum' if kind == 'date' else 'Zahl'} der Zeile"
 
 
 @dataclass

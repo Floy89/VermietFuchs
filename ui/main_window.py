@@ -22,7 +22,9 @@ from PyQt6.QtWidgets import (
 
 import config
 from app_context import AppContext
+from models.cost_type import CostType
 from ui import icons, styles
+from ui.dialogs.document_profiles_dialog import DocumentProfilesDialog
 from ui.dialogs.receipt_scan_dialog import ReceiptScanSetupDialog
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.helpers import ErrorGuard
@@ -167,9 +169,12 @@ class MainWindow(QMainWindow):
         scan_action = QAction(icons.icon("camera"), "Belegerkennung …", menu)
         scan_action.triggered.connect(self._open_receipt_scan_setup)
         scan_action.setEnabled(self._context.receipt_scan is not None)
+        profiles_action = QAction(icons.icon("report"), "Gelernte Absender …", menu)
+        profiles_action.triggered.connect(self._open_document_profiles)
 
         menu.addAction(switch_action)
         menu.addAction(settings_action)
+        menu.addAction(profiles_action)
         menu.addAction(scan_action)
         menu.addAction(theme_action)
         menu.addSeparator()
@@ -197,6 +202,13 @@ class MainWindow(QMainWindow):
         """Öffnet Einrichtung und Anleitung der optionalen Belegerkennung."""
         if self._context.receipt_scan is not None:
             ReceiptScanSetupDialog(self._context.receipt_scan, self).exec()
+
+    def _open_document_profiles(self) -> None:
+        """Zeigt, was beim Auslesen von Belegen je Absender gelernt wurde."""
+        cost_types: list[CostType] = []
+        with ErrorGuard(self):
+            cost_types = self._context.cost_types.list_types()
+        DocumentProfilesDialog(self._context.documents, cost_types, self).exec()
 
     def _toggle_theme(self) -> None:
         """Wechselt zwischen hellem und dunklem Design und merkt sich die Wahl."""

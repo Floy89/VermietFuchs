@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Sequence
 
 from models.cost import InvoiceSplit
 from models.document import DocumentDraft, DocumentProfile, FieldAnchor
-from models.tariff import SplitCalculation, fit_amounts
+from models.tariff import SplitCalculation, fit_amounts, year_fraction
 from models.value_objects import DateRange, Money
 from utils.numbers import to_decimal
 
@@ -72,6 +72,16 @@ _COST_TYPE_HINTS: tuple[tuple[str, str], ...] = (
     ("wasser", "Wasserversorgung"),
 )
 
+#: Monatsnamen für ausgeschriebene Daten ("09. Juli 2026"), auch abgekürzt.
+_MONTHS: dict[str, int] = {
+    "januar": 1, "jan": 1, "februar": 2, "feb": 2, "märz": 3, "maerz": 3, "mär": 3, "mrz": 3, "april": 4, "apr": 4,
+    "mai": 5, "juni": 6, "jun": 6, "juli": 7, "jul": 7, "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "oktober": 10, "okt": 10, "november": 11, "nov": 11, "dezember": 12, "dez": 12,
+}
+_TEXT_DATE_RE = re.compile(
+    r"(?<![\d.])(\d{1,2})\.\s*(" + "|".join(sorted(_MONTHS, key=len, reverse=True)) + r")\.?\s+(\d{4})(?!\d)", re.I
+)
+
 _COMPANY_RE = re.compile(
     r"([A-ZÄÖÜ][\wÄÖÜäöüß&.\-]*(?:\s+[A-ZÄÖÜ&][\wÄÖÜäöüß&.\-]*){0,4}\s+(?:AG|GmbH(?:\s*&\s*Co\.\s*KG)?|KG|SE|eG|e\.\s?V\.))(?![\w])"
 )
@@ -92,6 +102,10 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"(?<![\d.])(\d{1,2})\.(\d{2})(\d{4})(?!\d)", r"\1.\2.\3", text)  # "15.102026"
     text = re.sub(r"(?<=\d)\s*m[3'’`´](?![\w])", " m³", text)                # "290 m'" / "290 m3"
     text = re.sub(r"(?i)\bkwh\b", "kWh", text)
+    # "09. Juli 2026" -> "09.07.2026": dann gelten für solche Daten dieselben Regeln.
+    text = _TEXT_DATE_RE.sub(
+        lambda m: f"{int(m.group(1)):02d}.{_MONTHS[m.group(2).lower()]:02d}.{m.group(3)}", text
+    )
     return text
 
 
@@ -159,8 +173,7 @@ def identify_issuer(text: str) -> tuple[str, str]:
     Firmenname. Beides leer, wenn nichts zu finden ist.
     """
     normalized = normalize_text(text)
-    company = _COMPANY_RE.search(normalized)
-    name = " ".join(company.group(1).split()) if company else ""
+    name = _company_name(normalized)
     if vat_id := _VAT_ID_RE.search(normalized):
         return "ust:" + re.sub(r"\s", "", vat_id.group(1)).upper(), name
     if domain := _DOMAIN_RE.search(normalized):
@@ -168,6 +181,41 @@ def identify_issuer(text: str) -> tuple[str, str]:
     if name:
         return "name:" + name.casefold(), name
     return "", ""
+
+
+def _company_name(text: str) -> str:
+    """Der Firmenname des Absenders - so lang, wie er im Beleg wiederholt vorkommt.
+
+    Der reguläre Ausdruck erfasst bis zu fünf Wörter vor der Rechtsform; davor
+    steht manchmal Logo-Text, den die Texterkennung mitliest ("Maingau Jr
+    Energie Maingaij Energie GmbH"). Deshalb wird jeder Treffer ab den letzten
+    zwei Wörtern ("Energie GmbH") nur so weit nach vorn verlängert, wie die
+    längere Form noch mindestens halb so oft vorkommt (und mehr als einmal).
+    Unter allen Treffern gewinnt der häufigste vollständige Name.
+    """
+    flat = " ".join(text.split())
+
+    def count(candidate: str) -> int:
+        return len(re.findall(rf"(?<![\w]){re.escape(candidate)}(?![\w])", flat, re.I))
+
+    names: dict[str, int] = {}
+    for match in _COMPANY_RE.finditer(text):
+        words = match.group(1).split()
+        size = min(2, len(words))
+        name = " ".join(words[-size:])
+        while size < len(words):
+            longer = " ".join(words[-(size + 1):])
+            if count(longer) == count(name) or count(longer) >= max(2, count(name) / 2):
+                name, size = longer, size + 1
+            else:
+                break
+        names.setdefault(name, count(name))
+    # "Energie GmbH" steckt in "MAINGAU Energie GmbH" und kommt darum immer öfter vor - ein
+    # Name, der nur das Ende eines anderen gefundenen Namens ist, scheidet aus.
+    full = {name: hits for name, hits in names.items() if not any(other.endswith(" " + name) for other in names)}
+    if not full:
+        return ""
+    return max(full, key=lambda name: (full[name], len(name)))
 
 
 def readable_name(name: str) -> str:
@@ -190,6 +238,8 @@ def find_invoice_date(lines: Sequence[str]) -> date | None:
         lowered = line.lower()
         if "rechnungsdatum" in lowered or "datum der rechnung" in lowered or "rechnungs-datum" in lowered:
             for candidate in (line, *lines[index + 1:index + 5]):
+                if candidate is not line and re.search(r"zeitraum|vom|bis", candidate, re.I):
+                    continue
                 found = dates_in(candidate)
                 if found:
                     return found[0]
@@ -227,6 +277,10 @@ def find_amount(lines: Sequence[str]) -> Money | None:
         for index, line in enumerate(lines):
             lowered = line.lower()
             if keyword not in lowered or any(word in lowered for word in _AMOUNT_EXCLUDE):
+                continue
+            # Nur, wenn das Wort vorn in der Zeile steht: "Ihr Rechnungsbetrag 787,08 Euro" ja,
+            # "... hat sich Ihr Rechnungsbetrag um 69,68 Euro verringert" (Fließtext) nicht.
+            if len(lowered[:lowered.index(keyword)].split()) > 3:
                 continue
             values = _money_values(line)
             if values:
@@ -266,7 +320,18 @@ def find_consumption(lines: Sequence[str]) -> tuple[Decimal | None, str]:
     Fehlt die Einheit in der Zeile (Lesefehler der Texterkennung), wird die
     im Beleg am häufigsten genannte Einheit genommen.
     """
-    for keywords in (("gesamtverbrauch",), ("verbrauch", "abrechnungsmenge")):
+    for line in lines:
+        if "gesamtverbrauch" in line.lower() and (match := re.search(rf"({_NUMBER})\s*{_UNIT}", line, re.I)):
+            value = to_decimal(match.group(1))
+            if value is not None and value > 0:
+                return value, _unit(match.group(2))
+    # Summenzeile unter einer Verbrauchstabelle: "Summe 41.058 kWh"
+    for line in lines:
+        if match := re.fullmatch(rf"(?:summe|gesamt|gesamtmenge)\s*:?\s*({_NUMBER})\s*{_UNIT}", line, re.I):
+            value = to_decimal(match.group(1))
+            if value is not None and value > 0:
+                return value, _unit(match.group(2))
+    for keywords in (("verbrauch", "abrechnungsmenge"),):
         for line in lines:
             if any(keyword in line.lower() for keyword in keywords):
                 if match := re.search(rf"({_NUMBER})\s*{_UNIT}", line, re.I):
@@ -290,42 +355,113 @@ def _most_common_unit(lines: Sequence[str]) -> str:
 
 
 def find_vat(lines: Sequence[str]) -> Decimal | None:
-    """Umsatzsteuersatz, z. B. aus "Umsatzsteuer 7 % von 735,59 Euro"."""
+    """Umsatzsteuersatz, z. B. aus "Umsatzsteuer 7 % von 735,59 Euro".
+
+    Rückfall: die Steuerspalte der Preiszeilen ("AP … 8,260 Ct/kWh 16.949 kWh 19% 1.399,99 €").
+    """
     for line in lines:
         if re.search(r"umsatzsteuer|mwst|ust\b", line, re.I):
             if match := re.search(r"(\d{1,2}(?:,\d+)?)\s*%", line):
                 return to_decimal(match.group(1))
+    for line in lines:
+        if re.search(r"mengenpreis|arbeitspreis|grundpreis|\bAP\b|\bGP\b", line, re.I if "AP" not in line else 0):
+            if match := re.search(r"(?<![\d,])(0|5|7|16|19)\s*%", line):
+                return Decimal(match.group(1))
     return None
+
+
+#: Ein Preis, der Zeitraum, für den er gilt (``None``: ohne Zeitraum angegeben), und der
+#: Nettobetrag, den die Rechnung in dieser Zeile ausweist (``None``, wenn keiner dasteht).
+PricedPeriod = tuple[DateRange | None, Decimal, Decimal | None]
+
+
+def _line_net(line: str) -> Decimal | None:
+    """Der Betrag am Ende einer Preiszeile ("… 19% 74,56 €"), sonst ``None``."""
+    if re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*$", line, re.I):
+        values = _money_values(line)
+        return values[-1] if values else None
+    return None
+
+
+def _line_range(line: str) -> DateRange | None:
+    """Der Zeitraum am Anfang einer Preiszeile ("05.07.2025 - 31.12.2025 AP …"), sonst ``None``."""
+    found = dates_in(line)
+    if len(found) >= 2 and found[1] >= found[0]:
+        return DateRange(found[0], found[1])
+    return None
+
+
+def working_prices(lines: Sequence[str]) -> list[PricedPeriod]:
+    """Alle Arbeits- bzw. Mengenpreise netto je m³ oder kWh, mit Zeitraum, falls die Zeile einen nennt.
+
+    Erkennt "Arbeitspreis", "Mengenpreis", "Verbrauchspreis" und die Abkürzung
+    "AP"; Cent-Angaben werden in Euro umgerechnet.
+    """
+    result: list[PricedPeriod] = []
+    for line in lines:
+        if not re.search(r"mengenpreis|arbeitspreis|verbrauchspreis|\bAP\b", line, re.I if "AP" not in line else 0):
+            continue
+        value: Decimal | None = None
+        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*{_UNIT}", line, re.I):
+            value = to_decimal(match.group(1))
+        elif match := re.search(rf"({_NUMBER})\s*(?:ct|cent)\s*/\s*{_UNIT}", line, re.I):
+            cents = to_decimal(match.group(1))
+            value = cents / 100 if cents is not None else None
+        if value is not None and value > 0:
+            result.append((_line_range(line), value, _line_net(line)))
+    return result
+
+
+def base_prices(lines: Sequence[str]) -> list[PricedPeriod]:
+    """Alle Grundpreise netto auf ein Jahr gerechnet ("153,00 Euro / 365 Tage", "… EUR/Jahr", "… €/Monat").
+
+    Erkennt "Grundpreis" und die Abkürzung "GP".
+    """
+    result: list[PricedPeriod] = []
+    for line in lines:
+        if "grundpreis" not in line.lower() and not re.search(r"\bGP\b", line):
+            continue
+        value: Decimal | None = None
+        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*(\d+)\s*tag", line, re.I):
+            amount, days = to_decimal(match.group(1)), int(match.group(2))
+            value = amount * 365 / days if amount is not None and days else None
+        elif match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*jahr", line, re.I):
+            value = to_decimal(match.group(1))
+        elif match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*monat", line, re.I):
+            monthly = to_decimal(match.group(1))
+            value = monthly * 12 if monthly is not None else None
+        if value is not None and value > 0:
+            result.append((_line_range(line), value, _line_net(line)))
+    return result
 
 
 def find_working_price(lines: Sequence[str]) -> Decimal | None:
-    """Arbeits- bzw. Mengenpreis netto je m³ oder kWh (Cent-Angaben werden umgerechnet)."""
-    for line in lines:
-        if not re.search(r"mengenpreis|arbeitspreis|verbrauchspreis", line, re.I):
-            continue
-        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*{_UNIT}", line, re.I):
-            return to_decimal(match.group(1))
-        if match := re.search(rf"({_NUMBER})\s*(?:ct|cent)\s*/\s*{_UNIT}", line, re.I):
-            value = to_decimal(match.group(1))
-            return value / 100 if value is not None else None
-    return None
+    """Der (erste) Arbeits- bzw. Mengenpreis netto je m³ oder kWh."""
+    prices = working_prices(lines)
+    return prices[0][1] if prices else None
 
 
 def find_base_price(lines: Sequence[str]) -> Decimal | None:
-    """Grundpreis netto auf ein Jahr gerechnet ("153,00 Euro / 365 Tage", "… EUR/Jahr", "… €/Monat")."""
-    for line in lines:
-        if "grundpreis" not in line.lower():
+    """Der (erste) Grundpreis netto je Jahr."""
+    prices = base_prices(lines)
+    return prices[0][1] if prices else None
+
+
+def price_for(period: DateRange, prices: Sequence[PricedPeriod], fallback: Decimal | None) -> Decimal | None:
+    """Der Preis, der für ``period`` gilt: der mit dem Zeitraum, der ihn enthält (bzw. am meisten überlappt)."""
+    best: tuple[int, Decimal] | None = None
+    for valid, value, _net in prices:
+        if valid is None:
             continue
-        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*(\d+)\s*tag", line, re.I):
-            value, days = to_decimal(match.group(1)), int(match.group(2))
-            if value is not None and days:
-                return value * 365 / days
-        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*jahr", line, re.I):
-            return to_decimal(match.group(1))
-        if match := re.search(rf"({_NUMBER})\s*(?:euro|eur|€)\s*/\s*monat", line, re.I):
-            value = to_decimal(match.group(1))
-            return value * 12 if value is not None else None
-    return None
+        overlap = period.intersection(valid)
+        if overlap is not None and (best is None or overlap.days > best[0]):
+            best = (overlap.days, value)
+    return best[1] if best else fallback
+
+
+def stated_net(period: DateRange, prices: Sequence[PricedPeriod]) -> Decimal | None:
+    """Der Nettobetrag, den die Rechnung für genau diesen Zeitraum in einer Preiszeile ausweist."""
+    return next((net for valid, _value, net in prices if valid == period and net is not None), None)
 
 
 def find_cost_type(text: str, cost_type_names: Sequence[str]) -> str:
@@ -390,21 +526,51 @@ def find_reading_splits(lines: Sequence[str], period: DateRange | None) -> list[
     return result
 
 
-def find_volume_splits(lines: Sequence[str]) -> list[tuple[DateRange, SplitCalculation]]:
+#: Ein Abschnitt einer Gasrechnung: Zeitraum, Volumen/Zustandszahl/Brennwert und - falls
+#: angegeben - der daraus berechnete Verbrauch in kWh, wie er auf der Rechnung steht.
+VolumeRow = tuple[DateRange, SplitCalculation, Decimal | None]
+
+
+def find_volume_splits(lines: Sequence[str]) -> list[VolumeRow]:
     """Abschnitte einer Gasrechnung: Zeitraum, Abrechnungsvolumen (m³), Zustandszahl, Brennwert.
 
-    Beispielzeile: "1053045 01.06.2024 30.06.2024 67.819 67.935 S 116 0,9626 11,570"
+    Die Spalten stehen je Versorger anders; erkannt werden die beiden Faktoren
+    an ihrer Größe (Zustandszahl um 1 mit vier Nachkommastellen, Brennwert
+    zwischen 8 und 14), das Volumen ist die Zahl direkt davor. Beispiele::
+
+        1053045 01.06.2024 30.06.2024 67.819 67.935 S 116 0,9626 11,570
+        05.07.2025 - 31.12.2025 71.555 73.069 1) 1.514 11,630 0,9626 16.949 kWh
     """
-    pattern = re.compile(
-        rf"({_DATE})\s+({_DATE})\s+.*?(?<![\d.,])({_NUMBER})\s+(0,\d{{3,4}})\s+(\d{{1,2}},\d{{1,3}})\s*$"
-    )
-    result: list[tuple[DateRange, SplitCalculation]] = []
+    result: list[VolumeRow] = []
     for line in lines:
-        if match := pattern.search(line):
-            start, end = parse_date(match.group(1)), parse_date(match.group(2))
-            volume, condition, calorific = (to_decimal(match.group(i)) for i in (3, 4, 5))
-            if start and end and end >= start and volume and condition and calorific:
-                result.append((DateRange(start, end), SplitCalculation(volume, condition, calorific)))
+        match = re.search(rf"({_DATE})\s*[-–]?\s*({_DATE})\s+(.+)$", line)
+        if not match:
+            continue
+        start, end = parse_date(match.group(1)), parse_date(match.group(2))
+        rest = re.sub(r"(?<![\d.,])\d\)", " ", match.group(3))  # Fußnoten wie "1)"
+        tokens = _NUMBER_RE.findall(rest)
+        values = [to_decimal(token) for token in tokens]
+        condition_at = next(
+            (i for i, t in enumerate(tokens) if re.fullmatch(r"[01],\d{3,5}", t) and Decimal("0.8") <= values[i] <= Decimal("1.1")),  # type: ignore[operator]
+            -1,
+        )
+        if condition_at < 0:
+            continue
+        neighbours = [i for i in (condition_at - 1, condition_at + 1) if 0 <= i < len(tokens)]
+        calorific_at = next(
+            (i for i in neighbours if re.fullmatch(r"\d{1,2},\d{1,3}", tokens[i]) and Decimal(8) <= values[i] <= Decimal(14)),  # type: ignore[operator]
+            -1,
+        )
+        volume_at = min(condition_at, calorific_at) - 1
+        if calorific_at < 0 or volume_at < 0 or not (start and end and end >= start):
+            continue
+        volume, condition, calorific = values[volume_at], values[condition_at], values[calorific_at]
+        if not (volume and condition and calorific):
+            continue
+        stated: Decimal | None = None
+        if energy := re.search(rf"({_NUMBER})\s*kWh\s*$", rest):
+            stated = to_decimal(energy.group(1))
+        result.append((DateRange(start, end), SplitCalculation(volume, condition, calorific), stated))
     return result
 
 
@@ -520,6 +686,31 @@ def _apply_profile(draft: DocumentDraft, lines: Sequence[str], profile: Document
         draft.vat_percent = profile.vat_percent
 
 
+def _invoice_style_gross(
+    calc: SplitCalculation,
+    period: DateRange,
+    used: Decimal,
+    work_net: Decimal | None = None,
+    base_net: Decimal | None = None,
+) -> Decimal | None:
+    """Bruttokosten eines Abschnitts so gerechnet, wie Versorger es auf der Rechnung tun.
+
+    Arbeits- und Grundpreis-Zeile werden je für sich auf Cent gerundet, erst
+    die Summe bekommt die Umsatzsteuer. Weist die Rechnung den Nettobetrag
+    einer Zeile für genau diesen Abschnitt aus (``work_net``/``base_net``),
+    gilt dieser - er ist robuster als ein Preis, den die Texterkennung
+    vielleicht verstümmelt hat ("151 €/Jahr" statt "151,20 €/Jahr").
+    """
+    if not calc.has_prices:
+        return None
+    cent = Decimal("0.01")
+    work = work_net if work_net is not None else (used * (calc.working_price or Decimal(0))).quantize(cent, rounding=ROUND_HALF_UP)
+    base = base_net if base_net is not None else (
+        ((calc.base_price or Decimal(0)) * year_fraction(period)).quantize(cent, rounding=ROUND_HALF_UP)
+    )
+    return (work + base) * (Decimal(1) + (calc.vat_percent or Decimal(0)) / Decimal(100))
+
+
 def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSplit]:
     """Splits aus Zwischenablesungen bzw. Gas-Abschnitten - nur mit Preisen, sonst fehlen die Beträge.
 
@@ -528,27 +719,39 @@ def _build_splits(draft: DocumentDraft, lines: Sequence[str]) -> list[InvoiceSpl
     """
     if draft.working_price is None and draft.base_price_per_year is None:
         return []
-    prices = {
-        "working_price": draft.working_price,
-        "base_price": draft.base_price_per_year,
-        "vat_percent": draft.vat_percent,
-    }
+    work, base = working_prices(lines), base_prices(lines)
+
+    def prices(period: DateRange) -> dict[str, Decimal | None]:
+        # Ändern sich die Preise im Abrechnungszeitraum, gilt je Abschnitt der Preis seines Zeitraums.
+        return {
+            "working_price": price_for(period, work, draft.working_price),
+            "base_price": price_for(period, base, draft.base_price_per_year),
+            "vat_percent": draft.vat_percent,
+        }
+
     pieces: list[tuple[DateRange, Decimal, SplitCalculation]] = []
     volume_rows = find_volume_splits(lines)
     if len(volume_rows) >= 2:
-        for period, calc in volume_rows:
-            calc = SplitCalculation(calc.volume, calc.condition_number, calc.calorific_value, **prices)
-            energy = calc.energy()
+        for period, calc, stated in volume_rows:
+            calc = SplitCalculation(calc.volume, calc.condition_number, calc.calorific_value, **prices(period))
+            energy = stated or calc.energy()
             if energy is None:
                 return []
             pieces.append((period, energy, calc))
     else:
         for period, used in find_reading_splits(lines, draft.period):
-            pieces.append((period, used, SplitCalculation(**prices)))
+            pieces.append((period, used, SplitCalculation(**prices(period))))
     if len(pieces) < 2:
         return []
 
-    exact = [calc.gross_cost(period, used) for period, used, calc in pieces]
+    exact = [
+        _invoice_style_gross(
+            calc, period, used,
+            stated_net(period, work) if calc.working_price else None,
+            stated_net(period, base) if calc.base_price else None,
+        )
+        for period, used, calc in pieces
+    ]
     if any(value is None for value in exact):
         return []
     amounts = fit_amounts([value for value in exact if value is not None], draft.amount)

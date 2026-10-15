@@ -79,7 +79,7 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-346 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+353 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
 Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
@@ -350,6 +350,16 @@ Verbrauch standen, sowie Kostenart, Umlageschlüssel, Beschreibung, Einheit und 
 Beim nächsten Beleg desselben Absenders gilt das Gelernte vor den allgemeinen Regeln. Die
 Profile liegen in der Benutzerdatenbank (Tabelle `document_profiles`) und sind im
 Änderungsprotokoll sichtbar.
+
+Benutzer-Menü → **Gelernte Absender …** zeigt, was gelernt wurde: je Absender Kostenart,
+Schlüssel, Beschreibung und die gemerkten Fundstellen (z. B. *Rechnungsbetrag: „Gesamtbetrag
+‹Zahl› ‹Zahl› ‹Zahl›“, 3. Zahl der Zeile*). Dort lassen sich die Vorgaben ändern, einzelne
+Fundstellen oder ganze Absender vergessen - Rechnungen und Belege bleiben davon unberührt.
+
+Ändern sich Preise im Abrechnungszeitraum (z. B. zum Jahreswechsel), bekommt jeder Split den
+Preis seines Zeitraums. Weist die Rechnung je Abschnitt eigene Nettobeträge aus, werden diese
+übernommen - so stimmen die Splits auf den Cent, auch wenn die Texterkennung einen Preis
+verstümmelt hat.
 
 Grenzen: Die Regeln sind auf deutsche Versorger- und Gebührenrechnungen zugeschnitten. Bei
 schlechten Fotos liest die Texterkennung Ziffern falsch - darum werden die Werte nur

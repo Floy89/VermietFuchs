@@ -9,6 +9,7 @@ from typing import Sequence
 
 from models.cost import Cost
 from models.document import DocumentDraft, DocumentProfile
+from models.exceptions import ValidationError
 from repositories.interfaces import DocumentProfileRepository
 from services.document_reader import learn_anchor, read_document, split_lines
 
@@ -101,6 +102,28 @@ class DocumentService:
         """Alle gelernten Profile."""
         return self._profiles.list_all()
 
+    def save_profile(self, profile: DocumentProfile) -> None:
+        """Speichert ein von Hand geändertes Profil (Vorgaben oder entfernte Fundstellen)."""
+        if profile.id is None:
+            raise ValidationError("Nur bereits gelernte Profile lassen sich ändern.")
+        profile.updated_at = datetime.now()
+        self._profiles.update(profile)
+
+    def forget_anchor(self, profile_id: int, field_name: str) -> DocumentProfile:
+        """Vergisst eine einzelne Fundstelle; beim nächsten Beleg gilt dafür wieder die allgemeine Regel."""
+        profile = self._profiles.get(profile_id)
+        if profile.anchors.pop(field_name, None) is not None:
+            self.save_profile(profile)
+        return profile
+
     def forget(self, profile_id: int) -> None:
         """Löscht ein gelerntes Profil, z. B. wenn es in die Irre führt."""
         self._profiles.delete(profile_id)
+
+    def forget_all(self) -> int:
+        """Löscht alle gelernten Profile und gibt ihre Anzahl zurück."""
+        profiles = self._profiles.list_all()
+        for profile in profiles:
+            if profile.id is not None:
+                self._profiles.delete(profile.id)
+        return len(profiles)

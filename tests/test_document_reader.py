@@ -94,8 +94,34 @@ Summe brutto 3.056,85 EUR
 """
 
 
+#: Gasrechnung mit anderem Aufbau: ausgeschriebenes Datum, Preise ändern sich zum Jahreswechsel,
+#: Abkürzungen AP/GP, Tabelle mit Brennwert vor Zustandszahl und kWh am Zeilenende.
+GAS_SPLIT_PRICES = """
+LOGO Musterenergie
+Musterenergie GmbH, Hauptstr. 1, 12345 Musterstadt
+Rechnungsdatum 09. Juli 2026
+Abrechnungszeitraum: 05.07.2025 - 30.06.2026
+Durch den Wegfall der Umlage hat sich Ihr Rechnungsbetrag um 69,68 Euro verringert.
+Gas 0 kWh (0) 41.058 kWh (361) 3.471,02 659,49 (19%) 4.130,51
+Gesamtbetrag 3.471,02 659,49 4.130,51
+bis 07.07.2026 gezahlt -4.212,00
+Zeitraum Zählerstand in m³ Menge
+05.07.2025 - 31.12.2025 71.555 73.069 1) 1.514 11,630 0,9626 16.949 kWh
+01.01.2026 - 30.06.2026 73.069 75.222 1) 2.153 11,633 0,9626 24.109 kWh
+Summe 41.058 kWh
+05.07.2025 - 31.12.2025 AP Komforttarif 8,260 Ct/kWh 16.949 kWh 19% 1.399,99 €
+01.01.2026 - 30.06.2026 AP Komforttarif 7,970 Ct/kWh 24.109 kWh 19% 1.921,49 €
+05.07.2025 - 31.12.2025 GP Komforttarif {base} €/Jahr 180 Tage 19% 74,56 €
+01.01.2026 - 30.06.2026 GP Komforttarif {base} €/Jahr 181 Tage 19% 74,98 €
+Summe 3.471,02 €
+Quelle: Musterenergie GmbH
+USt-IdNr: DE 987654321
+"""
+
+
 class TestTextBasics:
     def test_ocr_mistakes_are_repaired(self) -> None:
+        assert normalize_text("Rechnungsdatum 09. Juli 2026, 1. Dez. 2025") == "Rechnungsdatum 09.07.2026, 01.12.2025"
         text = normalize_text("Datum 15.102026 / 31 .12.25 / 1 ,9829 Euro / m' / 493 rn3 / 290 m'")
         assert "15.10.2026" in text and "31.12.25" in text and "1,9829" in text
         assert "/ m³" in text and "493 m³" in text and "290 m³" in text
@@ -109,6 +135,9 @@ class TestTextBasics:
         assert identify_issuer(GAS) == ("web:stadtwerke-beispielstadt.de", "Stadtwerke Beispielstadt GmbH")
         assert identify_issuer("Müller Hausdienste GmbH\nRechnung") == ("name:müller hausdienste gmbh", "Müller Hausdienste GmbH")
         assert identify_issuer("nichts Erkennbares") == ("", "")
+        # Logo-Text vor dem Namen (Texterkennung) fällt weg, der vollständige Name bleibt.
+        noisy = "Musterenergie Jr Energie MUSTERENERGIF Energie GmbH\nMusterenergie Energie GmbH\nan Musterenergie Energie GmbH"
+        assert identify_issuer(noisy)[1] == "Musterenergie Energie GmbH"
 
     def test_cost_type_by_frequency(self) -> None:
         # Ein einzelnes "Abwasser" im Kleingedruckten einer Trinkwasserrechnung gibt nicht den Ausschlag.
@@ -175,6 +204,26 @@ class TestReading:
         assert [s.consumption for s in draft.splits] == [Decimal("1444"), Decimal("3293"), Decimal("12988"), Decimal("21410")]
         assert sum((s.amount for s in draft.splits), Money.zero()) == Money.from_decimal("3056.85")
         assert draft.splits[2].calculation is not None and draft.splits[2].calculation.volume == Decimal("1187")
+
+    def test_gas_invoice_with_prices_per_period(self) -> None:
+        draft = read_document(GAS_SPLIT_PRICES.format(base="151,20"), NAMES)
+
+        assert draft.description == "Musterenergie GmbH"
+        assert draft.invoice_date == date(2026, 7, 9)  # "09. Juli 2026"
+        assert draft.period == DateRange(date(2025, 7, 5), date(2026, 6, 30))
+        assert draft.amount == Money.from_decimal("4130.51")  # nicht die 69,68 aus dem Fließtext
+        assert (draft.consumption, draft.consumption_unit) == (Decimal("41058"), "kWh")
+        # Je Abschnitt der Preis seines Zeitraums - und Beträge auf den Cent wie auf der Rechnung.
+        assert [(s.consumption, s.amount, s.calculation.working_price) for s in draft.splits] == [  # type: ignore[union-attr]
+            (Decimal("16949"), Money.from_decimal("1754.71"), Decimal("0.0826")),
+            (Decimal("24109"), Money.from_decimal("2375.80"), Decimal("0.0797")),
+        ]
+        assert draft.splits[0].calculation.calorific_value == Decimal("11.630")  # type: ignore[union-attr]
+
+    def test_stated_line_amounts_beat_misread_prices(self) -> None:
+        # Die Texterkennung hat "151,20" als "151" gelesen; die Zeilenbeträge stimmen aber.
+        draft = read_document(GAS_SPLIT_PRICES.format(base="151"), NAMES, source="ocr")
+        assert [s.amount for s in draft.splits] == [Money.from_decimal("1754.71"), Money.from_decimal("2375.80")]
 
     def test_no_splits_without_prices(self) -> None:
         text = "\n".join(line for line in WATER.splitlines() if "preis" not in line.lower())
@@ -288,6 +337,98 @@ class TestDialog:
             documents=context.documents,
         )
         assert dialog._scan_available and "lernt aus Ihren Korrekturen" in dialog._scan_info.text()
+
+
+def _learn_water(context: AppContext) -> int:
+    """Liest die Wasserrechnung, speichert sie und lernt daraus; gibt die Profil-ID zurück."""
+    from models.cost import Cost
+
+    house = context.properties.save_property(Property(name="Profilhaus", address="Weg 4, 12345 Ort"))
+    assert house.id is not None
+    draft = context.documents.read(WATER, NAMES)
+    saved = context.costs.save_cost(
+        Cost(house.id, context.cost_types.get_by_name("Wasserversorgung"), draft.amount or Money.zero(),
+             draft.period or DateRange.for_year(2025), AllocationKey.CONSUMPTION, description="Wasser",
+             invoice_date=draft.invoice_date, consumption=Decimal("290"), consumption_unit="m³", splits=draft.splits)
+    )
+    profile = context.documents.learn(draft, saved)
+    assert profile is not None and profile.id is not None
+    return profile.id
+
+
+class TestProfilesDialog:
+    def test_anchor_is_described_readably(self) -> None:
+        assert FieldAnchor("rechnungsbetrag # euro", 0).describe("number") == "„Rechnungsbetrag ‹Zahl› euro“, 1. Zahl der Zeile"
+        assert FieldAnchor("zeitraum vom d bis d", 1).describe("date") == "„Zeitraum vom ‹Datum› bis ‹Datum›“, 2. Datum der Zeile"
+
+    def test_lists_profiles_and_their_anchors(self, qt_app: QApplication, context: AppContext) -> None:
+        from ui.dialogs.document_profiles_dialog import DocumentProfilesDialog
+
+        empty = DocumentProfilesDialog(context.documents, context.cost_types.list_types())
+        assert not empty._empty_label.isHidden() and not empty._forget_all_button.isEnabled()
+
+        _learn_water(context)
+        dialog = DocumentProfilesDialog(context.documents, context.cost_types.list_types())
+        assert dialog._empty_label.isHidden()
+        assert dialog._table.selected_item() is not None
+        assert "USt-IdNr. DE123456789" in dialog._source_label.text() and "7 %" in dialog._source_label.text()
+        rows = [dialog._anchor_list.item(i).text() for i in range(dialog._anchor_list.count())]  # type: ignore[union-attr]
+        assert any(row.startswith("Rechnungsbetrag: „") for row in rows)
+        assert any(row.startswith("Verbrauch: „Gesamtverbrauch ‹Zahl› m³“") for row in rows)
+
+    def test_forget_a_single_anchor(self, qt_app: QApplication, context: AppContext) -> None:
+        from ui.dialogs.document_profiles_dialog import DocumentProfilesDialog
+
+        _learn_water(context)
+        dialog = DocumentProfilesDialog(context.documents, context.cost_types.list_types())
+        before = dialog._anchor_list.count()
+        dialog._anchor_list.setCurrentRow(0)
+        assert dialog._forget_anchor_button.isEnabled()
+        dialog._forget_anchor()
+
+        assert dialog._anchor_list.count() == before - 1
+        (profile,) = context.documents.profiles()
+        assert len(profile.anchors) == before - 1 and profile.times_used == 1
+
+    def test_edit_defaults(self, qt_app: QApplication, context: AppContext) -> None:
+        from ui.dialogs.document_profiles_dialog import DocumentProfileEditDialog
+        from ui.helpers import select_data
+
+        _learn_water(context)
+        (profile,) = context.documents.profiles()
+        dialog = DocumentProfileEditDialog(context.documents, profile, context.cost_types.list_types())
+        assert dialog._type_combo.currentText() == "Wasserversorgung"
+        assert dialog._key_combo.currentData() == AllocationKey.CONSUMPTION
+        assert dialog._vat_combo.currentText() == "7 %"
+        dialog._name_edit.setText("Wasserwerke")
+        dialog._description_edit.setText("Trinkwasser Haus 4")
+        select_data(dialog._key_combo, AllocationKey.PERSONS)
+        dialog._vat_combo.setCurrentIndex(0)
+        dialog.accept()
+
+        (changed,) = context.documents.profiles()
+        assert (changed.issuer_name, changed.description, changed.allocation_key, changed.vat_percent) == (
+            "Wasserwerke", "Trinkwasser Haus 4", AllocationKey.PERSONS, None,
+        )
+        assert changed.anchors == profile.anchors  # Fundstellen bleiben
+        # Der nächste Beleg übernimmt die geänderten Vorgaben.
+        draft = context.documents.read(WATER, NAMES)
+        assert (draft.description, draft.allocation_key) == ("Trinkwasser Haus 4", AllocationKey.PERSONS)
+
+    def test_forget_profile_and_everything(self, qt_app: QApplication, context: AppContext, monkeypatch: pytest.MonkeyPatch) -> None:
+        import ui.dialogs.document_profiles_dialog as module
+
+        monkeypatch.setattr(module, "confirm", lambda *_args: True)
+        _learn_water(context)
+        dialog = module.DocumentProfilesDialog(context.documents, context.cost_types.list_types())
+        dialog._forget()
+        assert context.documents.profiles() == [] and not dialog._empty_label.isHidden()
+
+        _learn_water(context)
+        dialog._reload()
+        dialog._forget_all()
+        assert context.documents.profiles() == []
+        assert context.costs.list_costs(context.properties.list_properties()[0].id)  # Rechnungen bleiben
 
 
 @pytest.mark.skipif("not __import__('integrations.windows_ocr', fromlist=['WindowsOcr']).WindowsOcr.available()")

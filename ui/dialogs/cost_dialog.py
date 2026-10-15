@@ -486,7 +486,10 @@ class CostDialog(FormDialog):
             self._scan_info.setObjectName("Muted")
             text = f"Übernommen ({source}, ohne KI): {', '.join(applied)}."
             if draft.profile is not None:
-                text += f" Gelerntes von {draft.profile.times_used} früheren Beleg(en) dieses Absenders berücksichtigt."
+                text += (
+                    f" Gelerntes von {draft.profile.times_used} früheren Beleg(en) dieses Absenders berücksichtigt"
+                    " (ansehen und ändern: Benutzer-Menü → Gelernte Absender …)."
+                )
             text += " Bitte prüfen - Korrekturen merkt sich das Programm beim Speichern."
             self._scan_info.setText(text)
         self._scan_info.style().polish(self._scan_info)
