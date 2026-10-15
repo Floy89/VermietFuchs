@@ -25,6 +25,7 @@ from database.schema_v7 import SCHEMA_V7
 from database.schema_v8 import SCHEMA_V8
 from database.schema_v9 import SCHEMA_V9
 from database.schema_v10 import SCHEMA_V10
+from database.schema_v11 import SCHEMA_V11
 from models.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ MIGRATIONS: Final[list[tuple[int, str]]] = [
     (8, SCHEMA_V8),
     (9, SCHEMA_V9),
     (10, SCHEMA_V10),
+    (11, SCHEMA_V11),
 ]
 
 #: Höchste Schemaversion, die diese Programmversion kennt.

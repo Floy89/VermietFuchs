@@ -22,6 +22,7 @@ from repositories.billing_repositories import (
 )
 from repositories.cost_repository import SqliteCostRepository
 from repositories.cost_type_repository import SqliteCostTypeRepository
+from repositories.document_profile_repository import SqliteDocumentProfileRepository
 from repositories.meter_reading_repository import SqliteMeterReadingRepository
 from repositories.photo_repository import SqlitePhotoRepository
 from repositories.prepayment_rate_repository import SqlitePrepaymentRateRepository
@@ -36,6 +37,7 @@ from services.cost_allocation_service import CostAllocationService
 from services.cost_service import CostService
 from services.cost_type_service import CostTypeService
 from services.dashboard_service import DashboardService
+from services.document_service import DocumentService
 from services.invoice_bundle_service import InvoiceBundleService
 from services.invoice_checklist_service import InvoiceChecklistService
 from services.invoice_group_service import InvoiceGroupService
@@ -102,6 +104,7 @@ class AppContext:
         self.costs = CostService(costs)
         self.bundles = InvoiceBundleService(SqliteInvoiceBundleRepository(database, audit), costs, database)
         self.attachments = AttachmentService(SqliteCostAttachmentRepository(database, audit))
+        self.documents = DocumentService(SqliteDocumentProfileRepository(database, audit))
         self.cost_types = CostTypeService(cost_types)
         self.invoice_groups = InvoiceGroupService(costs, group_settings)
         self.invoice_checklist = InvoiceChecklistService(

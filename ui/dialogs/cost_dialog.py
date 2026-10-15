@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from pathlib import Path
 from decimal import Decimal
 from typing import Callable, Sequence
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QApplication,
     QComboBox,
     QFileDialog,
     QGridLayout,
@@ -28,22 +30,29 @@ from models.cost import (
     MAX_CONSUMPTION_SHARE,
     MIN_CONSUMPTION_SHARE,
     Cost,
+    validate_splits,
 )
 from models.cost_type import CostType
+from models.document import DocumentDraft
 from models.enums import AllocationKey, MeterType
-from models.exceptions import ValidationError
+from models.exceptions import AppError, ValidationError
 from models.receipt import ReceiptSuggestion
 from models.tenant import Tenant
 from models.value_objects import DateRange, Money
+from integrations.windows_ocr import WindowsOcr
 from services.attachment_service import AttachmentService
+from services.document_service import DocumentService
 from services.receipt_scan_service import ReceiptScanService
 from ui.dialogs.base_dialog import FormDialog
 from ui.dialogs.receipt_scan_dialog import OPTIONAL_HINT, scan_receipt_file
 from ui.dialogs.splits_dialog import SplitsDialog
-from ui.helpers import FileDropFilter, fill_combo, make_button, select_data
+from ui.helpers import ErrorGuard, FileDropFilter, fill_combo, make_button, select_data
+from ui.receipt_images import OCR_MAX_EDGE, OCR_MAX_PAGES, has_usable_text, load_receipt_images, pdf_text
 from ui.widgets.attachments import AttachmentsEditor, attachment_file_filter
 from ui.widgets.common import DateEdit, DecimalSpin, MoneySpin
 from utils.formatters import format_money
+
+logger = logging.getLogger(__name__)
 
 #: Ein Mieter zusammen mit der Bezeichnung seiner Wohnung.
 TenantChoice = tuple[Tenant, str]
@@ -130,9 +139,15 @@ class CostDialog(FormDialog):
         attachments: AttachmentService | None = None,
         attachment_paths: Sequence[Path] = (),
         vat_lookup: Callable[[int], Decimal | None] | None = None,
+        documents: DocumentService | None = None,
+        ocr: WindowsOcr | None = None,
     ) -> None:
         """
         Args:
+            documents: Belege ohne KI auslesen (Text aus PDFs) und aus den
+                Korrekturen beim Speichern lernen.
+            ocr: Windows-Texterkennung für Fotos und gescannte PDFs (``None``,
+                wenn auf diesem Rechner nicht verfügbar).
             vat_lookup: Liefert zu einer Kostenart den Umsatzsteuersatz, der bei
                 einer früheren Rechnung eingetragen wurde (Vorschlag im Split-Dialog).
             attachments: Service der Belege. Ist er angegeben, lassen sich
@@ -161,8 +176,13 @@ class CostDialog(FormDialog):
         self._receipt_scan = receipt_scan
         self._cost_types = list(cost_types)
         self._vat_lookup = vat_lookup
+        self._documents = documents
+        self._ocr = ocr
+        #: Der zuletzt ohne KI gelesene Beleg - aus ihm wird beim Speichern gelernt.
+        self._draft: DocumentDraft | None = None
         # quick_status(): sofortige Antwort - das Öffnen des Dialogs wartet nicht auf Ollama.
-        self._scan_available = receipt_scan is not None and receipt_scan.quick_status().available
+        self._ai_available = receipt_scan is not None and receipt_scan.quick_status().available
+        self._scan_available = self._ai_available or documents is not None
         self._attachments_editor: AttachmentsEditor | None = None
         if attachments is not None:
             self._attachments_editor = AttachmentsEditor(
@@ -334,10 +354,18 @@ class CostDialog(FormDialog):
         self._scan_info.setWordWrap(True)
 
         if self._scan_available:
-            scan_button = make_button("Beleg scannen …", "camera")
+            scan_button = make_button("Beleg auslesen …", "camera")
             scan_button.clicked.connect(self._scan_receipt)
             layout.addWidget(scan_button)
-            text = "Liest Rechnungssteller, Zeitraum, Betrag und Kostenart aus einem PDF oder Foto."
+            sources = ["PDFs direkt"]
+            if self._ocr is not None:
+                sources.append("Fotos und Scans per Windows-Texterkennung")
+            if self._ai_available:
+                sources.append("bei Bedarf mit der KI-Belegerkennung")
+            text = (
+                "Liest Absender, Datum, Zeitraum, Betrag, Verbrauch, Preise und Zwischenablesungen aus "
+                f"dem Beleg ({', '.join(sources)}) und lernt aus Ihren Korrekturen."
+            )
             if self._attachments_editor is not None:
                 text += " Der Beleg wird dabei an die Rechnung gehängt."
             self._scan_info.setText(text)
@@ -357,13 +385,111 @@ class CostDialog(FormDialog):
         self._scan_file(path)
 
     def _scan_file(self, path: Path) -> None:
-        """Lässt eine Belegdatei auslesen und trägt die Werte als Vorschlag ein."""
-        if self._receipt_scan is None:
-            return
+        """Liest eine Belegdatei aus und trägt die Werte als Vorschlag ein.
+
+        Reihenfolge: Text aus dem PDF (sofort, ohne KI) - sonst Windows-
+        Texterkennung (Fotos, Scans) - und nur wenn beides nichts ergibt, die
+        optionale KI-Belegerkennung.
+        """
         names = [cost_type.name for cost_type in self._cost_types]
-        suggestion = scan_receipt_file(self, self._receipt_scan, names, path)
-        if suggestion is not None:
-            self._apply_suggestion(suggestion)
+        if self._documents is not None:
+            text, source = self._document_text(path)
+            if text:
+                draft = self._documents.read(text, names, source)
+                if not draft.is_empty:
+                    self._apply_draft(draft)
+                    return
+        if self._ai_available and self._receipt_scan is not None:
+            suggestion = scan_receipt_file(self, self._receipt_scan, names, path)
+            if suggestion is not None:
+                self._draft = None
+                self._apply_suggestion(suggestion)
+            return
+        self._scan_info.setObjectName("ErrorLabel")
+        self._scan_info.setText(
+            "In diesem Beleg wurde kein lesbarer Text gefunden. "
+            + (
+                "Für Fotos und Scans fehlt die Windows-Texterkennung (Sprachpaket Deutsch)."
+                if self._ocr is None
+                else "Auch die Texterkennung hat nichts Verwertbares erkannt."
+            )
+        )
+        self._scan_info.style().polish(self._scan_info)
+
+    def _document_text(self, path: Path) -> tuple[str, str]:
+        """Text des Belegs: aus dem PDF, sonst per Texterkennung. ``("", "")``, wenn keiner zu bekommen ist."""
+        with ErrorGuard(self) as guard:
+            if path.suffix.lower() == ".pdf":
+                text = pdf_text(path)
+                if has_usable_text(text):
+                    return text, "pdf"
+            if self._ocr is None:
+                return "", ""
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                text = self._ocr.recognize(load_receipt_images(path, max_pages=OCR_MAX_PAGES, max_edge=OCR_MAX_EDGE))
+            finally:
+                QApplication.restoreOverrideCursor()
+            return (text, "ocr") if has_usable_text(text) else ("", "")
+        if not guard.ok:
+            return "", ""
+        return "", ""
+
+    def _apply_draft(self, draft: DocumentDraft) -> None:
+        """Überträgt einen ohne KI gelesenen Vorschlag in die Felder; Nicht-Erkanntes bleibt unverändert."""
+        self._draft = draft
+        applied: list[str] = []
+        index = -1
+        if draft.cost_type_id is not None:
+            index = next((i for i, t in enumerate(self._cost_types) if t.id == draft.cost_type_id), -1)
+        if index < 0 and draft.cost_type_name:
+            index = next((i for i, t in enumerate(self._cost_types) if t.name == draft.cost_type_name), -1)
+        if index >= 0:
+            self._type_combo.setCurrentIndex(index)
+            applied.append("Kostenart")
+        if draft.allocation_key is not None and self._key_combo.findData(draft.allocation_key) >= 0:
+            select_data(self._key_combo, draft.allocation_key)
+        if draft.description:
+            self._description_edit.setText(draft.description)
+            applied.append("Beschreibung")
+        if draft.invoice_date is not None:
+            self._has_invoice_date.setChecked(True)
+            self._invoice_date_edit.set_value(draft.invoice_date)
+            applied.append("Rechnungsdatum")
+        if draft.period is not None:
+            self._from_edit.set_value(draft.period.start)
+            self._to_edit.set_value(draft.period.end)
+            applied.append("Zeitraum")
+        if draft.amount is not None:
+            self._amount_spin.set_money(draft.amount)
+            applied.append("Betrag")
+        if draft.consumption is not None:
+            self._consumption_spin.set_decimal(draft.consumption)
+            if draft.consumption_unit:
+                self._unit_edit.setText(draft.consumption_unit)
+            applied.append("Verbrauch")
+        if draft.splits and draft.period is not None and draft.amount is not None:
+            try:
+                validate_splits(draft.splits, draft.period, draft.amount, draft.consumption)
+            except ValidationError as exc:
+                logger.info("Erkannte Splits passen nicht zur Rechnung: %s", exc)
+            else:
+                self._splits = list(draft.splits)
+                self._update_splits_label()
+                applied.append(f"{len(draft.splits)} Splits mit Preisen")
+
+        source = "aus dem PDF-Text" if draft.source == "pdf" else "per Windows-Texterkennung"
+        if not applied:
+            self._scan_info.setObjectName("ErrorLabel")
+            self._scan_info.setText(f"Im Beleg ({source}) wurde nichts Verwertbares erkannt.")
+        else:
+            self._scan_info.setObjectName("Muted")
+            text = f"Übernommen ({source}, ohne KI): {', '.join(applied)}."
+            if draft.profile is not None:
+                text += f" Gelerntes von {draft.profile.times_used} früheren Beleg(en) dieses Absenders berücksichtigt."
+            text += " Bitte prüfen - Korrekturen merkt sich das Programm beim Speichern."
+            self._scan_info.setText(text)
+        self._scan_info.style().polish(self._scan_info)
 
     # ------------------------------------------------------------------ #
     # Belege per Drag-and-drop
@@ -579,3 +705,9 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
         self._cost = saved
         if self._attachments_editor is not None and saved.id is not None:
             self._attachments_editor.commit(saved.id)
+        if self._draft is not None and self._documents is not None:
+            # Lernen darf das Speichern nie verhindern - die Rechnung ist schon gespeichert.
+            try:
+                self._documents.learn(self._draft, saved)
+            except AppError:
+                logger.exception("Aus dem Beleg konnte nicht gelernt werden")

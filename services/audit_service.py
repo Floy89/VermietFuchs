@@ -35,6 +35,7 @@ TABLE_LABELS: Final[Mapping[str, str]] = {
     "photos": "Foto",
     "cost_attachments": "Beleg",
     "invoice_bundles": "Sammelrechnung",
+    "document_profiles": "Gelerntes Absender-Profil",
     "settings": "Einstellungen",
 }
 

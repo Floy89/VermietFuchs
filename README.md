@@ -79,10 +79,11 @@ Leerstand), Zählerständen, Kosten und Vorauszahlungen für das Vorjahr an.
 .venv\Scripts\python.exe -m pytest
 ```
 
-276 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
+346 Tests: Value Objects, Kostenverteilung (reine Rechenlogik), Kostenarten-Katalog und
 Schema-Migration sowie Integrationstests über Services + Repositories + SQLite (Audit Trail,
 Transaktionssicherheit, PDF-Export, Benutzerverwaltung, Performance mit 150 Wohnungen).
-Die Belegerkennung wird gegen einen nachgebauten Ollama-Dienst getestet.
+Das Auslesen von Belegen ohne KI wird mit erfundenen Versorgerrechnungen (PDF-Text und typische
+Lesefehler der Texterkennung) getestet, die KI-Belegerkennung gegen einen nachgebauten Ollama-Dienst.
 `tests/test_ui_dialogs.py` baut alle Tabs und Dialoge ohne sichtbares Fenster auf und prüft
 Duplizieren und Drag-and-drop.
 `tests/test_external_templates.py` vergleicht 15 Datensätze mit den Ergebnissen zweier fremder
@@ -182,9 +183,9 @@ mit der Rechnung gelöscht.
 - Dateien auf die Rechnungsliste im Tab *Rechnungen* ziehen legt eine **neue Rechnung** mit
   diesen Belegen an. Die Spalte *Belege* zeigt, wie viele an einer Rechnung hängen.
 - Änderungen an den Belegen werden erst mit *Speichern* der Rechnung übernommen.
-- Ist die Belegerkennung eingerichtet (siehe unten), liest **Auslesen** den markierten Beleg
-  aus und trägt Rechnungssteller, Datum, Zeitraum, Betrag und Kostenart als Vorschlag ein.
-  *Beleg scannen …* oben im Dialog hängt die gewählte Datei zugleich an die Rechnung.
+- **Beleg auslesen …** oben im Dialog liest einen Beleg aus (siehe *Belege auslesen* unten) und
+  hängt die Datei zugleich an die Rechnung. Ist die KI-Belegerkennung eingerichtet, liest
+  **Auslesen** auch den markierten Beleg in der Liste aus.
 - Beim Duplizieren einer Rechnung werden die Belege nicht mitkopiert.
 
 Belege vergrößern die Datenbankdatei entsprechend - und damit auch jede Sicherungskopie.
@@ -329,14 +330,39 @@ markierte Wohnung zusätzlich von Hand einschränken (z. B. Teilabrechnung); ein
 die Anpassung, „Zurücksetzen" stellt den Vertragszeitraum wieder her. Die Anteile der übrigen
 Mieter ändern sich dadurch nicht - nicht abgerechnete Tage bleiben beim Eigentümer.
 
-### Belegerkennung (optional)
+### Belege auslesen (ohne KI)
 
-Rechnungen und Bescheide (PDF oder Foto) lassen sich von einem KI-Modell auslesen, das lokal
-auf dem eigenen Rechner läuft. Die Werte landen als Vorschlag im Dialog „Neue
+**Beleg auslesen …** im Rechnungsdialog liest Absender, Rechnungsdatum, Zeitraum, Betrag,
+Verbrauch mit Einheit, Kostenart, Arbeits- und Grundpreis, Umsatzsteuer und
+Zwischenablesungen aus einem Beleg und schlägt daraus auch gleich die **Splits** vor - nur,
+wenn deren Summe exakt zum Rechnungsbetrag passt. Alles läuft lokal, ohne KI-Modell:
+
+1. **PDF mit Text** (die meisten Versorger-PDFs): Der Text wird direkt gelesen, sofort.
+2. **Fotos und gescannte PDFs:** Windows-Texterkennung (in Windows 10/11 enthalten, Sprache
+   Deutsch muss installiert sein - ist sie bei deutschem Windows in der Regel). Fehlt sie,
+   nennt der Dialog das.
+3. Nur wenn beides nichts ergibt und die optionale KI-Belegerkennung eingerichtet ist, wird sie
+   gefragt.
+
+Das Programm **lernt aus Korrekturen**: Beim Speichern merkt es sich je Absender (erkannt an
+USt-IdNr., Internetadresse oder Firmenname), in welcher Zeile Betrag, Datum, Zeitraum und
+Verbrauch standen, sowie Kostenart, Umlageschlüssel, Beschreibung, Einheit und Steuersatz.
+Beim nächsten Beleg desselben Absenders gilt das Gelernte vor den allgemeinen Regeln. Die
+Profile liegen in der Benutzerdatenbank (Tabelle `document_profiles`) und sind im
+Änderungsprotokoll sichtbar.
+
+Grenzen: Die Regeln sind auf deutsche Versorger- und Gebührenrechnungen zugeschnitten. Bei
+schlechten Fotos liest die Texterkennung Ziffern falsch - darum werden die Werte nur
+vorgeschlagen und erst nach Prüfung gespeichert.
+
+### Belegerkennung mit KI (optional)
+
+Rechnungen und Bescheide (PDF oder Foto) lassen sich zusätzlich von einem KI-Modell auslesen,
+das lokal auf dem eigenen Rechner läuft. Die Werte landen als Vorschlag im Dialog „Neue
 Kostenposition" und werden erst nach Prüfung gespeichert.
 
 Das Modell ist **kein Bestandteil der Anwendung**. Solange nichts eingerichtet ist, zeigt der
-Dialog nur einen Hinweis; die Schaltfläche **Beleg scannen …** erscheint erst, wenn die
+Dialog nur das Auslesen ohne KI; die KI kommt erst zum Zug, wenn die
 Anwendung ein betriebsbereites Modell gefunden hat. Einrichtung und
 Anleitung: Benutzer-Menü → **Belegerkennung …** (Text: [ui/resources/belegerkennung.md](ui/resources/belegerkennung.md)).
 
@@ -482,7 +508,7 @@ config.py                Pfade (Skript vs. .exe), Konstanten
 app_context.py           Composition Root: verdrahtet Repositories und Services
 models/                  Domain Layer - Entities, Value Objects, fachliche Regeln
 repositories/            Infrastructure - SQL-Zugriff (Repository Pattern)
-integrations/            Infrastructure - optionale Fremdprogramme (Ollama für die Belegerkennung)
+integrations/            Infrastructure - Windows-Texterkennung, optional Ollama (KI-Belegerkennung)
 database/                SQLite-Verbindung, Schema, Migrationen
 services/                Application Layer - Anwendungsfälle und Abrechnungslogik
 ui/                      Presentation - PyQt6 (Tabs, Dialoge, Theme)
@@ -514,6 +540,12 @@ ui  -->  services  -->  repositories/interfaces.py (Protokolle)  <--  repositori
   (zwei Methoden: `check`, `extract`). Die Ollama-Anbindung in `integrations/ollama_client.py`
   nutzt ausschließlich die Python-Standardbibliothek - kein zusätzliches Paket, nichts davon
   ist für den Betrieb nötig. Ein anderes Modell anzubinden heißt: eine weitere Klasse schreiben.
+- **Belege ohne KI:** `services/document_reader.py` besteht nur aus reinen Funktionen
+  (Text -> `DocumentDraft`); `DocumentService` legt das Gelernte als `DocumentProfile` je
+  Absender ab. Gelernt wird eine *Fundstelle* (`FieldAnchor`): das Zeilenmuster mit Zahlen als
+  `#` und Daten als `D` plus die Position des Werts in der Zeile - so passt sie auch auf die
+  Rechnung des nächsten Jahres. `integrations/windows_ocr.py` liefert den Text von Fotos über
+  `Windows.Media.Ocr` (Pakete `winrt-*`).
 - **Fehlerbehandlung:** Alle erwarteten Fehler erben von `AppError` und tragen eine deutsche
   Meldung. Dialoge zeigen sie direkt im Formular an, alles andere wird geloggt (`logs/`).
 - **Oberfläche ohne Fachlogik:** Tabs lesen Eingaben, rufen Services auf und zeigen Ergebnisse.
@@ -537,6 +569,7 @@ Tabellenskizze:
 | Tabelle `prepayment_rates` statt `tenants.prepayment_amount` (Schema 3) | Historie der vereinbarten Vorauszahlungen mit Gültigkeitszeitraum; Erhöhungen abbildbar |
 | Tabelle `payments` entfällt (Schema 4) | Einzelzahlungen werden nicht mehr erfasst; Vorauszahlungen ergeben sich aus den Raten |
 | `costs` + `invoice_date`, `consumption`, `consumption_unit`, `excluded` (Schema 4) | Rechnungsmanagement: Verbrauch für die Messdienst-Meldung, Ausschluss einzelner Rechnungen |
+| Tabelle `document_profiles` (Schema 11) | Gelerntes je Rechnungsabsender für das Auslesen von Belegen ohne KI |
 | Tabelle `invoice_bundles`, `costs.bundle_id`, `cost_attachments.bundle_id` (Schema 10) | Sammelrechnung: eine Rechnung mit mehreren Kostenarten; ein Beleg gehört zu einer Rechnung *oder* einer Sammelrechnung |
 | Tabelle `cost_attachments` (Schema 9) | Belege (PDF/Foto) je Rechnung als BLOB; werden mit der Rechnung gelöscht |
 | `costs.difference_key` (Schema 8) | Wonach die Differenz zwischen Gesamtverbrauch laut Rechnung und Summe der Wohnungszähler verteilt wird |
@@ -582,6 +615,7 @@ Verwendete Bibliotheken (jeweils unter ihrer eigenen Lizenz):
 |---|---|---|
 | [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) und Qt 6 | Oberfläche, PDF-Anzeige der Belege | GPL v3 |
 | [ReportLab](https://www.reportlab.com/opensource/) | Erzeugen der Abrechnungs-PDFs | BSD |
+| [PyWinRT](https://github.com/pywinrt/pywinrt) (`winrt-*`) | Zugriff auf die Windows-Texterkennung | MIT |
 | [PyInstaller](https://pyinstaller.org/) | Verpacken in die `.exe` (nur beim Bauen) | GPL v2 mit Ausnahme für die erzeugten Programme |
 
 Die optionale Belegerkennung spricht ein lokal installiertes [Ollama](https://ollama.com) an;

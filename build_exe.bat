@@ -30,6 +30,7 @@ rem --exclude-module : Entwicklerwerkzeuge und Tests gehoeren nicht in die .exe
     --add-data "ui\resources\logo.png;ui\resources" ^
     --add-data "ui\styles\stylesheet.qss;ui\styles" ^
     --add-data "ui\resources\belegerkennung.md;ui\resources" ^
+    --collect-all winrt ^
     --exclude-module tools ^
     --exclude-module tests ^
     --exclude-module pytest ^

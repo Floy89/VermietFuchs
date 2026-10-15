@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from app_context import AppContext
+from integrations.windows_ocr import default_ocr
 from models.attachment import ATTACHMENT_EXTENSIONS
 from models.cost import Cost
 from models.invoice_checklist import (
@@ -707,6 +708,8 @@ class InvoicesTab(BaseTab):
                 attachments=self._context.attachments,
                 attachment_paths=attachment_paths or (),
                 vat_lookup=lambda type_id: self._last_vat(property_id, type_id),
+                documents=self._context.documents,
+                ocr=default_ocr(),
             )
         if dialog is None:
             return

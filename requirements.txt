@@ -1,3 +1,11 @@
 # Laufzeit-Abhängigkeiten der Anwendung
 PyQt6>=6.6
 reportlab>=4.0
+# Windows-eigene Texterkennung für Fotos und gescannte Belege (nur unter Windows)
+winrt-runtime>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.0; sys_platform == "win32"
+winrt-Windows.Globalization>=3.0; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.0; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=3.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.0; sys_platform == "win32"

@@ -1,8 +1,10 @@
-# Belegerkennung einrichten (optional)
+# KI-Belegerkennung einrichten (optional)
 
-Die Anwendung kann Rechnungen und Bescheide (PDF oder Foto) automatisch auslesen und die
-Werte in eine neue Kostenposition eintragen: Rechnungssteller, Rechnungsnummer, Zeitraum,
-Betrag und die passende Kostenart.
+**Für die meisten Belege brauchen Sie das nicht.** Die Schaltfläche **Beleg auslesen …** im
+Rechnungsdialog liest PDFs und - per Windows-Texterkennung - auch Fotos und Scans ohne KI
+aus und lernt aus Ihren Korrekturen. Die KI-Belegerkennung kommt nur zum Zug, wenn dort
+nichts Verwertbares erkannt wird, etwa bei ungewöhnlich aufgebauten oder schlecht
+lesbaren Belegen.
 
 Dafür wird ein KI-Modell benötigt, das **auf Ihrem eigenen Rechner** läuft. Es ist bewusst
 nicht Teil der Anwendung: Es ist mehrere Gigabyte groß und nicht jeder braucht es. Ohne
@@ -51,12 +53,11 @@ diese Aufgabe kein Ergebnis.
 3. Bei **Modell** den Namen aus Schritt 2 eintragen, z. B. `qwen3-vl:4b-instruct`.
 4. **Verbindung prüfen** anklicken. Erscheint „Bereit", auf **Speichern** klicken.
 
-Ab jetzt zeigt der Dialog „Neue Kostenposition" (Tab *Abrechnung*) die Schaltfläche
-**Beleg scannen …**.
+Ab jetzt nutzt **Beleg auslesen …** im Dialog „Neue Kostenposition" bei Bedarf die KI.
 
 ## Verwendung
 
-1. Tab *Abrechnung* → **Neu** → **Beleg scannen …**
+1. Tab *Rechnungen* → **Neu** → **Beleg auslesen …**
 2. PDF oder Foto auswählen. Das Auslesen dauert je nach Rechner zwischen wenigen Sekunden
    und einigen Minuten; beim ersten Beleg nach dem Start am längsten, weil das Modell
    erst geladen wird. Richtwert: Auf einem Laptop mit 4-GB-Grafikkarte brauchte das
@@ -88,4 +89,4 @@ Ausgewertet werden die ersten drei Seiten eines Belegs.
 ## Wieder entfernen
 
 Modell löschen: `ollama rm qwen3-vl:4b-instruct` (bzw. der gewählte Name). Ollama selbst über *Windows-Einstellungen → Apps*
-deinstallieren. Die Anwendung zeigt danach wieder nur den Hinweis auf die optionale Funktion.
+deinstallieren. Das Auslesen ohne KI funktioniert danach unverändert weiter.

@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QVBoxLayout, QWidget
 
 from models.value_objects import Money
 from ui.widgets.common import DecimalSpin, MoneySpin
-from ui.widgets.number_edit import NumberEdit, format_number, parse_number
+from ui.widgets.number_edit import NumberEdit, format_number
+from utils.numbers import parse_number
 
 
 class TestParsing:

@@ -20,6 +20,7 @@ from models.audit_entry import AuditEntry
 from models.cost import Cost
 from models.billing import BillingPeriodOverride
 from models.cost_type import CostType
+from models.document import DocumentProfile
 from models.enums import AuditAction, MeterType
 from models.invoice_bundle import InvoiceBundle
 from models.invoice_checklist import CostTypeRelevance
@@ -197,6 +198,14 @@ class CostAttachmentRepository(Repository[CostAttachment], Protocol):
 
     def count_by_cost(self) -> dict[int, int]:
         """Anzahl der Belege je Rechnungs-ID."""
+        ...
+
+
+class DocumentProfileRepository(Repository[DocumentProfile], Protocol):
+    """Zugriff auf die gelernten Absender-Profile."""
+
+    def find_by_issuer(self, issuer_key: str) -> DocumentProfile | None:
+        """Das Profil eines Absenders oder ``None``."""
         ...
 
 

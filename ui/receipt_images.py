@@ -30,23 +30,23 @@ def receipt_file_filter() -> str:
     return f"Belege ({patterns})"
 
 
-def load_receipt_images(path: Path) -> list[bytes]:
+def load_receipt_images(path: Path, max_pages: int = MAX_PAGES, max_edge: int = MAX_EDGE) -> list[bytes]:
     """Lädt einen Beleg und gibt seine Seiten als PNG-Daten zurück.
 
     Raises:
         ValidationError: Wenn die Datei nicht gelesen oder dargestellt werden kann.
     """
     if path.suffix.lower() == ".pdf":
-        pages = _render_pdf(path)
+        pages = _render_pdf(path, max_pages, max_edge)
     else:
         image = QImage(str(path))
         if image.isNull():
             raise ValidationError("Die gewählte Datei ist kein lesbares Bild.")
         pages = [image]
-    return [_to_png(_limit_size(page)) for page in pages]
+    return [_to_png(_limit_size(page, max_edge)) for page in pages]
 
 
-def _render_pdf(path: Path) -> list[QImage]:
+def _render_pdf(path: Path, max_pages: int = MAX_PAGES, max_edge: int = MAX_EDGE) -> list[QImage]:
     """Rendert die ersten Seiten eines PDFs auf weißem Hintergrund."""
     document = QPdfDocument(None)
     document.load(str(path))
@@ -54,9 +54,9 @@ def _render_pdf(path: Path) -> list[QImage]:
         raise ValidationError("Das PDF kann nicht geöffnet werden oder enthält keine Seiten.")
 
     pages: list[QImage] = []
-    for index in range(min(document.pageCount(), MAX_PAGES)):
+    for index in range(min(document.pageCount(), max_pages)):
         point_size = document.pagePointSize(index)
-        scale = MAX_EDGE / max(point_size.width(), point_size.height(), 1.0)
+        scale = max_edge / max(point_size.width(), point_size.height(), 1.0)
         size = QSize(int(point_size.width() * scale), int(point_size.height() * scale))
         rendered = document.render(index, size)
         # PDF-Seiten haben keinen eigenen Hintergrund - ohne Weiß wäre er
@@ -71,12 +71,12 @@ def _render_pdf(path: Path) -> list[QImage]:
     return pages
 
 
-def _limit_size(image: QImage) -> QImage:
+def _limit_size(image: QImage, max_edge: int = MAX_EDGE) -> QImage:
     """Verkleinert sehr große Bilder (z. B. Handyfotos) auf die Maximalgröße."""
-    if max(image.width(), image.height()) <= MAX_EDGE:
+    if max(image.width(), image.height()) <= max_edge:
         return image
     return image.scaled(
-        MAX_EDGE, MAX_EDGE, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        max_edge, max_edge, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
     )
 
 
@@ -86,3 +86,26 @@ def _to_png(image: QImage) -> bytes:
     buffer.open(QIODevice.OpenModeFlag.WriteOnly)
     image.save(buffer, "PNG")
     return bytes(buffer.data())
+
+
+#: Für die Texterkennung gescannter PDFs: so viele Seiten höchstens (Details stehen oft hinten).
+OCR_MAX_PAGES: Final[int] = 8
+#: Auflösung für die Texterkennung. Ausprobiert an einer echten Versorgerrechnung: 1600 Pixel lieferten
+#: alle Werte richtig, 2600 Pixel deutlich mehr Lesefehler ("rn3" statt "m³", getrennte Wörter).
+OCR_MAX_EDGE: Final[int] = 1600
+
+
+def pdf_text(path: Path) -> str:
+    """Der im PDF enthaltene Text aller Seiten - leer bei gescannten PDFs (dort ist der Text nur ein Bild)."""
+    document = QPdfDocument(None)
+    document.load(str(path))
+    if document.pageCount() <= 0:
+        raise ValidationError("Das PDF kann nicht geöffnet werden oder enthält keine Seiten.")
+    text = "\n".join(document.getAllText(index).text() for index in range(document.pageCount()))
+    document.close()
+    return text
+
+
+def has_usable_text(text: str) -> bool:
+    """``True``, wenn der Text nach einem echten Beleg aussieht (nicht nur ein paar Zeichen eines Scans)."""
+    return sum(character.isdigit() for character in text) >= 10 and len(text.strip()) >= 80
