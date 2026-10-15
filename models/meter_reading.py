@@ -92,7 +92,22 @@ def reading_pair(readings: Sequence[MeterReading], period: DateRange) -> tuple[M
     return start_reading, end_reading
 
 
-def readings_enclose(pair: tuple[MeterReading, MeterReading], period: DateRange) -> bool:
-    """``True``, wenn die beiden Ablesungen ``period`` umschließen (mit der üblichen Toleranz)."""
+def enclosing_pair(readings: Sequence[MeterReading], period: DateRange) -> tuple[MeterReading, MeterReading] | None:
+    """Die engsten Ablesungen, die ``period`` umschließen: die letzte bis zum Beginn, die erste ab dem Ende.
+
+    Für einen Split, zu dessen Ende es keinen Zählerstand gibt (der Versorger
+    liest am 12.09. ab, der Vermieter am 31.05. und 31.12.): Dann gilt der
+    Verbrauch zwischen 31.05. und 31.12. - derselbe Zeitraum, nach dem auch
+    der angrenzende Split bis 31.12. verteilt wird. ``None``, wenn es vor oder
+    nach dem Zeitraum keine Ablesung gibt.
+    """
     tolerance = timedelta(days=READING_TOLERANCE_DAYS)
-    return pair[0].date <= period.start + tolerance and pair[1].date >= period.end - tolerance
+    ordered = sorted(readings, key=lambda reading: reading.date)
+    before = [r for r in ordered if r.date <= period.start + tolerance]
+    if not before:
+        return None
+    start = before[-1]
+    after = [r for r in ordered if r.date >= period.end - tolerance and r.date > start.date]
+    if not after or after[0].value < start.value:
+        return None
+    return start, after[0]

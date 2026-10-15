@@ -4,8 +4,9 @@ Beispiel wie bei Versorgern üblich: Die Wasserrechnung 14.09.2024–12.09.2025
 hat Splits zu den Ableseterminen des Versorgers. Der Vermieter liest seine
 Wohnungszähler aber zu anderen Terminen ab (31.12. und 31.05.) - für den Split
 31.05.–12.09.2025 gibt es also keinen Endstand. Statt nach Wohnfläche zu
-verteilen, wird der Split in den Abrechnungszeitraum zusammengezogen: Dessen
-Verbrauch je Wohnung bestimmt die Anteile.
+verteilen, gilt der Verbrauch zwischen den Ablesungen, die den Split
+umschließen (31.05.-31.12.2025) - dieselbe Verteilung wie für den angrenzenden
+Split 13.09.-31.12. der Folgerechnung.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ SPLITS = [
     InvoiceSplit(DateRange(date(2025, 1, 1), date(2025, 5, 30)), Money.from_decimal("317.64")),
     InvoiceSplit(DateRange(date(2025, 5, 31), date(2025, 9, 12)), Money.from_decimal("221.07")),
 ]
-#: Zählerstände je Wohnung: 31.12.2024, 31.05.2025, 31.12.2025 (Jahresverbrauch 54 / 54 / 40 m³).
+#: Zählerstände je Wohnung: 31.12.2024, 31.05.2025, 31.12.2025 (31.05.-31.12.: 32 / 29 / 0 m³).
 READINGS = {"EG": ("43", "65", "97"), "1OG": ("51", "76", "105"), "DG": ("91", "131", "131")}
 
 
@@ -58,19 +59,40 @@ def _summer_shares(context: AppContext, house_id: int) -> dict[str, Money]:
 
 
 class TestSplitWithoutReadings:
-    def test_split_uses_consumption_of_the_billing_period(self, context: AppContext) -> None:
+    def test_split_uses_the_readings_around_it(self, context: AppContext) -> None:
         house_id = _house(context)
         result = context.billing.create_billing(house_id, YEAR)
 
         assert any(
-            "31.05.2025 – 12.09.2025 fehlen Kaltwasser-Zählerstände" in w and "01.01.2025 – 31.12.2025" in w
+            "31.05.2025 – 12.09.2025 fehlen Kaltwasser-Zählerstände" in w and "31.05.2025 und 31.12.2025" in w
             for w in result.warnings
         ), result.warnings
         assert not any("nach Wohnfläche" in w for w in result.warnings)
-        # 221,07 € im Verhältnis des Jahresverbrauchs 54 : 54 : 40.
+        # 221,07 € im Verhältnis des Verbrauchs 31.05.-31.12.: 32 : 29 : 0.
         assert _summer_shares(context, house_id) == {
-            "EG": Money.from_decimal("80.66"), "1OG": Money.from_decimal("80.66"), "DG": Money.from_decimal("59.75"),
+            "EG": Money.from_decimal("115.97"), "1OG": Money.from_decimal("105.10"), "DG": Money.from_decimal("0.00"),
         }
+
+    def test_same_distribution_as_the_following_split(self, context: AppContext) -> None:
+        house_id = _house(context)
+        follow_up = DateRange(date(2025, 9, 13), date(2026, 9, 30))
+        context.costs.save_cost(
+            Cost(house_id, context.cost_types.get_by_name("Wasserversorgung"), Money.from_decimal("787.08"), follow_up,
+                 AllocationKey.CONSUMPTION, description="Wasserwerk Folgejahr",
+                 splits=[InvoiceSplit(DateRange(date(2025, 9, 13), date(2025, 12, 31)), Money.from_decimal("208.47")),
+                         InvoiceSplit(DateRange(date(2026, 1, 1), date(2026, 9, 30)), Money.from_decimal("578.61"))])
+        )
+        result = context.billing.create_billing(house_id, YEAR)
+        weights = {}
+        for statement in result.statements:
+            for share in statement.shares:
+                if share.cost.period.start in (date(2025, 5, 31), date(2025, 9, 13)):
+                    weights.setdefault(share.cost.period.start, {})[statement.apartment.number] = (
+                        share.apartment_weight / share.total_weight
+                    )
+        # Beide Abschnitte nach demselben Verhältnis - als wären sie ein Abschnitt 31.05.-31.12.
+        summer, autumn = weights[date(2025, 5, 31)], weights[date(2025, 9, 13)]
+        assert {k: round(v, 3) for k, v in summer.items()} == {k: round(v, 3) for k, v in autumn.items()}
 
     def test_split_with_readings_is_unchanged(self, context: AppContext) -> None:
         house_id = _house(context)
@@ -85,7 +107,7 @@ class TestSplitWithoutReadings:
         }
 
     def test_without_any_enclosing_readings_area_is_the_fallback(self, context: AppContext) -> None:
-        # Nur Ablesungen bis 31.05.2025: Kein Zeitraum umschließt den Split 31.05.–12.09.
+        # Nur Ablesungen bis 31.05.2025: Keine Ablesung nach dem Split 31.05.–12.09.
         house_id = _house(context, {name: values[:2] for name, values in READINGS.items()})
         result = context.billing.create_billing(house_id, YEAR)
 
