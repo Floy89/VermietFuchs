@@ -520,6 +520,21 @@ Ablesungen davor und danach (hier 31.05.–31.12.). Der Split wird damit wie die
 Splits dieses Zeitraums verteilt; der Tab *Abrechnung* nennt das im Hinweis. Erst wenn es auch
 davor oder danach keine Ablesung gibt, wird ersatzweise nach Wohnfläche verteilt.
 
+### Mietkaution
+
+Im Mieter-Dialog stehen **Kaution**, optional ein abweichender Einzahlungstag (sonst gilt der
+Vertragsbeginn) und die **Zinssätze** des Kautionskontos, je mit „ab“-Datum. **Kaution …** in der
+Mieterliste rechnet die Kaution wie ein Sparkonto fort:
+
+- Zinsen taggenau (je Tag Zinssatz / 365 bzw. / 366), Gutschrift zum Jahresende; die Zinsen
+  erhöhen die Kaution und werden im Folgejahr mitverzinst (§ 551 Abs. 3 BGB).
+- Rückzahlung standardmäßig zum Tag nach dem Vertragsende (der letzte Vertragstag zählt noch als
+  Zinstag), sonst zu einem wählbaren Stichtag.
+- Nicht eingerechnet sind Abzüge: offene Forderungen (z. B. eine Nachzahlung aus der
+  Nebenkostenabrechnung) und von der Bank einbehaltene Kapitalertragsteuer.
+
+Übersteigt die Kaution drei Monatsmieten ohne Nebenkosten (§ 551 Abs. 1 BGB), weist der Dialog darauf hin.
+
 ### Vorauszahlungen
 
 Einzelne Zahlungen werden nicht erfasst. Jeder Mieter hat stattdessen eine Historie

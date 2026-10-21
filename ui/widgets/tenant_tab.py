@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QWidget
 from app_context import AppContext
 from models.tenant import Tenant
 from models.value_objects import Money
+from ui.dialogs.deposit_dialog import DepositDialog
 from ui.dialogs.key_overrides_dialog import KeyOverridesDialog
 from ui.dialogs.prepayment_rates_dialog import PrepaymentRatesDialog
 from ui.dialogs.tenant_dialog import TenantDialog
@@ -36,7 +37,13 @@ class TenantTab(BaseTab):
         self._keys_button = make_button(
             "Umlageschlüssel …", "settings", tooltip="Im Mietvertrag abweichend vereinbarte Umlageschlüssel"
         )
-        for button in (self._keys_button, self._rates_button, self._add_button, self._edit_button, self._delete_button):
+        self._deposit_button = make_button(
+            "Kaution …", "coins", tooltip="Kaution mit Zinsen und Rückzahlungsbetrag bei Auszug"
+        )
+        for button in (
+            self._deposit_button, self._keys_button, self._rates_button,
+            self._add_button, self._edit_button, self._delete_button,
+        ):
             card.header.addWidget(button)
 
         # --- Filterzeile ---------------------------------------------------
@@ -76,6 +83,12 @@ class TenantTab(BaseTab):
                     lambda t: "aktiv" if t.is_active(date.today()) else "beendet" if t.end_date and t.end_date < date.today() else "zukünftig",
                     color=lambda t: "success" if t.is_active(date.today()) else "muted",
                 ),
+                Column(
+                    "Kaution",
+                    lambda t: format_money(t.deposit_amount) if t.has_deposit else "",
+                    lambda t: t.deposit_amount.cents,
+                    True,
+                ),
                 Column("Kontakt", lambda t: t.contact),
             ]
         )
@@ -83,6 +96,7 @@ class TenantTab(BaseTab):
         self.root.addWidget(card, 1)
 
         self._keys_button.clicked.connect(self._edit_keys)
+        self._deposit_button.clicked.connect(self._show_deposit)
         self._rates_button.clicked.connect(self._edit_rates)
         self._add_button.clicked.connect(self._add)
         self._edit_button.clicked.connect(self._edit)
@@ -134,12 +148,20 @@ class TenantTab(BaseTab):
         self._delete_button.setEnabled(has_selection)
         self._rates_button.setEnabled(has_selection)
         self._keys_button.setEnabled(has_selection)
+        selected = self._table.selected_item()
+        self._deposit_button.setEnabled(selected is not None and selected.has_deposit)
 
     def _edit_keys(self) -> None:
         """Öffnet die abweichenden Umlageschlüssel des markierten Mieters."""
         tenant = self._table.selected_item()
         if tenant is not None:
             KeyOverridesDialog(self._context.key_overrides, tenant, self).exec()
+
+    def _show_deposit(self) -> None:
+        """Zeigt Kaution, Zinsen und Rückzahlungsbetrag des markierten Mieters."""
+        tenant = self._table.selected_item()
+        if tenant is not None and tenant.has_deposit:
+            DepositDialog(tenant, self).exec()
 
     def _edit_rates(self) -> None:
         """Öffnet die Historie der Vorauszahlungen des markierten Mieters."""

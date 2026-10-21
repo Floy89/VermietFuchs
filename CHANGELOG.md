@@ -26,10 +26,18 @@ automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
   verbundenen Heizungs- und Warmwasserversorgung). Ist er gesetzt und deckt die Rechnung den
   Zeitraum ab, entfällt die eigene Position „Warmwasser – Kaltwasseranteil“ (ein Hinweis nennt
   Menge und Betrag).
+- **Mietkaution mit Zinsen:** Im Mieter-Dialog lassen sich Kaution, Einzahlungstag (Standard:
+  Vertragsbeginn) und die Zinssätze des Kautionskontos mit „ab“-Datum erfassen. **Kaution …** in
+  der Mieterliste zeigt die Entwicklung je Jahr - taggenau verzinst, Gutschrift zum Jahresende, die
+  Zinsen werden mitverzinst (§ 551 Abs. 3 BGB) - und den Rückzahlungsbetrag zum Tag nach dem
+  Vertragsende oder zu einem frei wählbaren Stichtag. Hinweis, wenn die Kaution drei Monatsmieten
+  übersteigt.
 - **Belegungshistorie je Wohnung:** Änderungen der Personenzahl (Geburt, Einzug, Auszug) werden im
   Wohnungsdialog mit „ab“-Datum eingetragen. Der Schlüssel Personenzahl rechnet je Zeitraum
   tagesgenau mit der damals gültigen Belegung (Personentage); Abrechnungen früherer Jahre bleiben
-  dadurch unverändert. Die Datenbank wird dafür auf Version 14 angepasst.
+  dadurch unverändert.
+- Die Datenbank wird beim ersten Start auf Version 15 angepasst (vorher legt das Programm eine
+  Sicherungskopie an).
 - **Nicht umlegbare Kosten:** Neuer Umlageschlüssel „Nicht umlegbar (trägt Eigentümer)“ für alle
   Kostenarten, z. B. für die Miete der Rauchwarnmelder. Solche Rechnungen erscheinen in keiner
   Mieterabrechnung, zählen aber in den Gesamtkosten; die Abrechnung weist sie als „nicht umlegbar“ aus.
