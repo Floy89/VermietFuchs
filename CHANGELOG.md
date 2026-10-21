@@ -13,7 +13,8 @@ automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
 - **Wasserregel** für Wasserrechnungen (Rechnungsdialog → „Verbrauchsdifferenz“ →
   „Wasserregel …“). Die Wasserrechnungen des Abrechnungszeitraums werden gemeinsam aufgeteilt:
-  Grundgebühr (aus dem Grundpreis der Splits) zu gleichen Teilen je Wohnung, der Mengenpreis
+  Grundgebühr (aus dem Grundpreis der Splits) nach Wohnfläche - oder, wenn im Mietvertrag so
+  vereinbart, mit „Wasserregel, Grundgebühr je Wohnung“ zu gleichen Teilen je Wohnung -, der Mengenpreis
   für das Wasser der Wohnungszähler nach Verbrauch, das Kaltwasser für die Warmwasserbereitung
   (Warmwasserzähler, z. B. Ablesewerte der ISTA-Abrechnung) als eigene Position
   „Warmwasser – Kaltwasseranteil“ nach Warmwasserverbrauch, die Restmenge (Heizungsnachspeisung,

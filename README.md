@@ -479,7 +479,7 @@ im Rechnungsdialog fest, wer die 52 m³ trägt:
 |---|---|---|
 | *wie gemessener Verbrauch* (Standard) | Betrag × Zähler der Wohnung / Summe der Zähler - wie bisher | eine Zeile, zusätzlich „entspricht 81,081 m³ von 200 m³ Gesamtverbrauch lt. Rechnung" |
 | *nach Wohneinheiten*, *Wohnfläche* oder *Personenzahl* | Betrag × 148/200 nach Zählern, Betrag × 52/200 nach dem gewählten Schlüssel | zwei Zeilen: „Verbrauch laut Zählern" und „Differenz zum Gesamtverbrauch nach …" mit der zugerechneten Menge und dem Verbrauch gesamt |
-| *Wasserregel* (nur Kaltwasser) | siehe unten | bis zu vier Zeilen: Grundgebühr, Wohnungswasser, Restmenge und die eigene Position „Warmwasser – Kaltwasseranteil" |
+| *Wasserregel* bzw. *Wasserregel, Grundgebühr je Wohnung* (nur Kaltwasser) | siehe unten | bis zu vier Zeilen: Grundgebühr, Wohnungswasser, Restmenge und die eigene Position „Warmwasser – Kaltwasseranteil" |
 
 Das gilt nur, wenn die Einheit der Rechnung zur Zählerart passt (m³ zu m³) und der
 Gesamtverbrauch über der Summe der Wohnungszähler liegt. Ist er kleiner, erscheint ein Hinweis
@@ -491,7 +491,9 @@ und an den Warmwasserzählern der Wohnungen gemessen wird (z. B. Ablesewerte der
 Messdienst-Abrechnung, Zählerart *Warmwasser*). Mit der Einstellung *Wasserregel* werden die
 Wasserrechnungen des ganzen Abrechnungszeitraums gemeinsam aufgeteilt:
 
-1. **Grundgebühr** (Grundpreis aus den Splits der Rechnung) zu gleichen Teilen je Wohnung,
+1. **Grundgebühr** (Grundpreis aus den Splits der Rechnung) nach Wohnfläche - das ist ohne
+   Vereinbarung im Mietvertrag der gesetzliche Maßstab (§ 556a Abs. 1 BGB). Ist vereinbart, dass sie
+   je Wohnung verteilt wird, die Variante *Wasserregel, Grundgebühr je Wohnung* wählen,
 2. **Wohnungswasser** - Mengenpreis × Summe der Wohnungszähler - nach gemessenem Verbrauch,
 3. **Warmwasser – Kaltwasseranteil** - Mengenpreis × Summe der Warmwasserzähler - als eigene
    Position nach Warmwasserverbrauch,

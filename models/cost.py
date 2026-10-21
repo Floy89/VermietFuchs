@@ -31,10 +31,22 @@ DIFFERENCE_KEYS: Final[tuple[AllocationKey, ...]] = (
     AllocationKey.AREA,
     AllocationKey.PERSONS,
     AllocationKey.WATER_RULES,
+    AllocationKey.WATER_RULES_UNITS,
 )
 
+#: Varianten der Wasserregel (nur Kaltwasser). Sie unterscheiden sich nur darin, wie die Grundgebühr
+#: verteilt wird: nach Wohnfläche (gesetzlicher Standard, § 556a Abs. 1 BGB) oder je Wohnung.
+WATER_RULES_KEYS: Final[tuple[AllocationKey, ...]] = (AllocationKey.WATER_RULES, AllocationKey.WATER_RULES_UNITS)
+
 #: Bezeichnung der Wasserregel im Umlageschlüssel einer Rechnung.
-WATER_RULES_LABEL: Final[str] = "Wasserregel: Grundgebühr je Wohnung, Menge nach Zählern, Warmwasser getrennt, Rest nach Wohnfläche"
+WATER_RULES_LABELS: Final[dict[AllocationKey, str]] = {
+    AllocationKey.WATER_RULES: (
+        "Wasserregel: Grundgebühr nach Wohnfläche, Menge nach Zählern, Warmwasser getrennt, Rest nach Wohnfläche"
+    ),
+    AllocationKey.WATER_RULES_UNITS: (
+        "Wasserregel: Grundgebühr je Wohnung, Menge nach Zählern, Warmwasser getrennt, Rest nach Wohnfläche"
+    ),
+}
 
 #: Erlaubte Abweichung zwischen Gesamtverbrauch und Summe der Split-Verbräuche
 #: (gleicht Rundungen in der dritten Nachkommastelle aus).
@@ -317,7 +329,7 @@ class Cost:
             raise ValidationError(
                 f"Die Verbrauchsdifferenz kann nicht nach '{self.difference_key.label}' verteilt werden."
             )
-        elif self.difference_key is AllocationKey.WATER_RULES and self.cost_type.meter_type is not MeterType.COLD_WATER:
+        elif self.difference_key in WATER_RULES_KEYS and self.cost_type.meter_type is not MeterType.COLD_WATER:
             raise ValidationError("Die Wasserregel gilt nur für Kostenarten mit Kaltwasserzähler.")
 
         if self.allocation_key is AllocationKey.DIRECT:
@@ -358,7 +370,7 @@ class Cost:
             area_share = 100 - self.consumption_share
             return f"{self.consumption_share} % Verbrauch, {area_share} % Wohnfläche"
         if self.uses_water_rules:
-            return WATER_RULES_LABEL
+            return WATER_RULES_LABELS[self.difference_key]
         if self.splits_difference:
             return f"{self.allocation_key.label}, Differenz nach {self.difference_key.label}"
         return self.allocation_key.label
@@ -380,7 +392,7 @@ class Cost:
         """
         return (
             self.splits_difference
-            and self.difference_key is AllocationKey.WATER_RULES
+            and self.difference_key in WATER_RULES_KEYS
             and self.cost_type.meter_type is MeterType.COLD_WATER
         )
 

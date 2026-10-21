@@ -6,8 +6,8 @@ die Warmwasserzähler der Wohnungen), der Rest geht in Heizungsnachspeisung,
 Allgemein-Zapfstellen und Verluste (nicht gemessen). Für Rechnungen, deren
 Verbrauchsdifferenz nach der *Wasserregel* verteilt wird, gilt deshalb:
 
-1. **Grundgebühr** (Grundpreis aus den Rechengrundlagen der Splits) - zu gleichen
-   Teilen je Wohneinheit.
+1. **Grundgebühr** (Grundpreis aus den Rechengrundlagen der Splits) - nach Wohnfläche
+   (gesetzlicher Standard) oder, wenn so vereinbart, zu gleichen Teilen je Wohnung.
 2. **Mengenpreis** - der Rest der Rechnung. Er bezieht sich auf den Gesamtverbrauch
    laut Rechnung G und wird nach Mengen aufgeteilt:
 
@@ -55,7 +55,8 @@ HOT_WATER_COST_TYPE: Final[CostType] = CostType(
     sort_order=21,  # direkt nach der Wasserversorgung (20)
 )
 
-BASE_LABEL: Final[str] = "Grundgebühr nach Wohneinheiten"
+BASE_LABEL_AREA: Final[str] = "Grundgebühr nach Wohnfläche"
+BASE_LABEL_UNITS: Final[str] = "Grundgebühr nach Wohneinheiten"
 MEASURED_LABEL: Final[str] = "Wohnungswasser laut Zählern"
 REST_LABEL: Final[str] = "Restmenge nach Wohnfläche"
 HOT_WATER_LABEL: Final[str] = "Warmwasserverbrauch"
@@ -240,7 +241,12 @@ def water_positions(
     unit = breakdown.unit
     components: list[CostComponent] = []
     if not breakdown.base_amount.is_zero:
-        components.append(CostComponent(breakdown.base_amount, UnitWeight(label=BASE_LABEL)))
+        base_strategy = (
+            UnitWeight(label=BASE_LABEL_UNITS)
+            if pieces[0].difference_key is AllocationKey.WATER_RULES_UNITS
+            else AreaWeight(label=BASE_LABEL_AREA)
+        )
+        components.append(CostComponent(breakdown.base_amount, base_strategy))
     components.append(
         CostComponent(
             breakdown.measured_amount,

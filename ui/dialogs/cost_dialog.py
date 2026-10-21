@@ -29,7 +29,7 @@ from models.cost import (
     DIFFERENCE_KEYS,
     MAX_CONSUMPTION_SHARE,
     MIN_CONSUMPTION_SHARE,
-    WATER_RULES_LABEL,
+    WATER_RULES_LABELS,
     Cost,
     validate_splits,
 )
@@ -301,8 +301,8 @@ class CostDialog(FormDialog):
                 (
                     "wie gemessener Verbrauch"
                     if key is AllocationKey.CONSUMPTION
-                    else WATER_RULES_LABEL
-                    if key is AllocationKey.WATER_RULES
+                    else WATER_RULES_LABELS[key]
+                    if key in WATER_RULES_LABELS
                     else f"nach {key.label}",
                     key,
                 )

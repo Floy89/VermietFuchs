@@ -43,9 +43,11 @@ class AllocationKey(str, Enum):
     UNITS = "UNITS"
     #: Fertige Beträge je Mieter, z. B. aus der Abrechnung eines Messdienstes.
     DIRECT = "DIRECT"
-    #: Nur als Verteilung der Verbrauchsdifferenz einer Wasserrechnung: Grundgebühr je Wohnung,
+    #: Nur als Verteilung der Verbrauchsdifferenz einer Wasserrechnung: Grundgebühr nach Wohnfläche,
     #: Kaltwasser für die Warmwasserbereitung getrennt, Restmenge nach Wohnfläche.
     WATER_RULES = "WATER_RULES"
+    #: Wie ``WATER_RULES``, aber die Grundgebühr zu gleichen Teilen je Wohnung (braucht eine Vereinbarung).
+    WATER_RULES_UNITS = "WATER_RULES_UNITS"
     #: Nicht umlegbar: Der Eigentümer trägt die Kosten allein (z. B. Miete der Rauchwarnmelder).
     OWNER = "OWNER"
 
@@ -105,6 +107,7 @@ _ALLOCATION_LABELS: dict[AllocationKey, str] = {
     AllocationKey.UNITS: "Wohneinheiten",
     AllocationKey.DIRECT: "Direkte Zuordnung",
     AllocationKey.WATER_RULES: "Wasserregel",
+    AllocationKey.WATER_RULES_UNITS: "Wasserregel, Grundgebühr je Wohnung",
     AllocationKey.OWNER: "Nicht umlegbar (trägt Eigentümer)",
 }
 

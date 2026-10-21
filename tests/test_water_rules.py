@@ -29,7 +29,8 @@ from models.tariff import SplitCalculation
 from models.tenant import Tenant
 from models.value_objects import DateRange, Money
 from services.water_allocation import (
-    BASE_LABEL,
+    BASE_LABEL_AREA,
+    BASE_LABEL_UNITS as BASE_LABEL,
     HOT_WATER_COST_TYPE,
     MEASURED_LABEL,
     REST_LABEL,
@@ -52,7 +53,7 @@ def _split(start: date, end: date, amount: str, m3: str, calculation: SplitCalcu
     return InvoiceSplit(DateRange(start, end), Money.from_decimal(amount), Decimal(m3), calculation)
 
 
-def _invoices(house_id: int = 1, cost_type: CostType = WATER, key: AllocationKey = AllocationKey.WATER_RULES,
+def _invoices(house_id: int = 1, cost_type: CostType = WATER, key: AllocationKey = AllocationKey.WATER_RULES_UNITS,
               with_prices: bool = True) -> list[Cost]:
     """Die beiden Gelsenwasser-Rechnungen mit ihren Splits (Werte laut Beleg)."""
     p24, p25, p25c = (PRICE_2024, PRICE_2025, PRICE_2025_CALENDAR) if with_prices else (None, None, None)
@@ -185,7 +186,7 @@ FLATS = (("EG", "105", 2, "Anna"), ("1OG", "158.66", 3, "Ben"), ("DG", "105", 5,
 
 
 def _house(context: AppContext, *, hot: dict | None = HOT, cold: dict = COLD,  # type: ignore[type-arg]
-           key: AllocationKey = AllocationKey.WATER_RULES) -> tuple[int, dict[str, int]]:
+           key: AllocationKey = AllocationKey.WATER_RULES_UNITS) -> tuple[int, dict[str, int]]:
     house = context.properties.save_property(Property(name="Wasserhaus", address="Weg 1, 12345 Ort"))
     assert house.id is not None
     flats: dict[str, int] = {}
@@ -310,7 +311,7 @@ class TestBilling:
 
     def test_setting_is_stored(self, context: AppContext) -> None:
         house_id, _ = _house(context)
-        assert all(cost.difference_key is AllocationKey.WATER_RULES for cost in context.costs.list_costs(house_id))
+        assert all(cost.difference_key is AllocationKey.WATER_RULES_UNITS for cost in context.costs.list_costs(house_id))
 
     def test_dialog_offers_the_water_rule(self, qt_app: QApplication, context: AppContext) -> None:
         from ui.dialogs.cost_dialog import CostDialog
@@ -320,9 +321,10 @@ class TestBilling:
         dialog = CostDialog(context.costs.save_cost, context.cost_types.list_types(), [], house_id, YEAR, cost=invoice)
         combo = dialog._difference_combo
         keys = [combo.itemData(i) for i in range(combo.count())]
-        assert AllocationKey.WATER_RULES in keys
-        assert combo.currentData() is AllocationKey.WATER_RULES
-        assert combo.itemText(keys.index(AllocationKey.WATER_RULES)).startswith("Wasserregel")
+        assert AllocationKey.WATER_RULES in keys and AllocationKey.WATER_RULES_UNITS in keys
+        assert combo.currentData() is AllocationKey.WATER_RULES_UNITS
+        assert combo.itemText(keys.index(AllocationKey.WATER_RULES)).startswith("Wasserregel: Grundgebühr nach Wohnfläche")
+        assert combo.itemText(keys.index(AllocationKey.WATER_RULES_UNITS)).startswith("Wasserregel: Grundgebühr je Wohnung")
 
 
 # ---------------------------------------------------------------------- #
@@ -451,3 +453,26 @@ class TestOrder:
         statement = result.statements[0]
         assert [share.cost.cost_type.name for share in statement.shares][0] == "Grundsteuer"
 
+
+class TestBaseFeeByArea:
+    """Standard der Wasserregel: Grundgebühr nach Wohnfläche (§ 556a Abs. 1 BGB, ohne Vereinbarung)."""
+
+    def test_base_fee_is_distributed_by_area(self, context: AppContext) -> None:
+        house_id, _ = _house(context, key=AllocationKey.WATER_RULES)
+        result = context.billing.create_billing(house_id, YEAR)
+
+        base = {name: parts[BASE_LABEL_AREA] for name, parts in _parts(result).items()}
+        assert sum(base.values(), Money.zero()) == Money.from_decimal("163.71")
+        # 105 / 158,66 / 105 m² von 368,66 m²
+        assert base["1OG"] > base["EG"] and abs(base["EG"] - base["DG"]) <= Money(1)
+        assert base["1OG"] == Money.from_decimal("70.45")  # Rest-Cents an EG und DG (0,71 > 0,57 Cent)
+        # Alles andere bleibt wie bei "je Wohnung".
+        assert _parts(result)["DG"][MEASURED_LABEL] == Money.from_decimal("84.87")
+        assert result.total_allocated == Money.from_decimal("747.18")
+
+    def test_labels(self) -> None:
+        area = _invoices(key=AllocationKey.WATER_RULES)[0]
+        units = _invoices(key=AllocationKey.WATER_RULES_UNITS)[0]
+        assert area.uses_water_rules and units.uses_water_rules
+        assert "Grundgebühr nach Wohnfläche" in area.allocation_label
+        assert "Grundgebühr je Wohnung" in units.allocation_label

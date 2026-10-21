@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from models.apartment import Apartment
 from models.billing import BillingPeriodOverride, BillingResult, TenantStatement
-from models.cost import Cost
+from models.cost import WATER_RULES_KEYS, Cost
 from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
 from models.meter_reading import READING_TOLERANCE_DAYS, MeterReading
@@ -291,7 +291,7 @@ class BillingService:
             Die neuen Positionen, nach ``id()`` ihrer Kostenposition.
         """
         for cost in result.costs:
-            if cost.difference_key is AllocationKey.WATER_RULES and cost.consumption is None:
+            if cost.difference_key in WATER_RULES_KEYS and cost.consumption is None:
                 result.warnings.append(
                     f"'{cost.title}': Für die Wasserregel fehlt der Gesamtverbrauch laut Rechnung - "
                     "verteilt wurde nach gemessenem Verbrauch."
