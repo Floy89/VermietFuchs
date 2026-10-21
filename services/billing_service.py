@@ -163,6 +163,10 @@ class BillingService:
         for cost in result.costs:
             overrides = self._overrides_for(cost, all_overrides)
             position = water.get(id(cost))
+            # Personenzahl, wie sie im Zeitraum dieser Position galt (Belegungshistorie, tagesgenau).
+            cost_apartments = [
+                replace(apartment, persons_in_period=apartment.average_persons(cost.period)) for apartment in apartments
+            ]
             if position is not None:
                 if overrides:
                     result.warnings.append(
@@ -170,12 +174,12 @@ class BillingService:
                         "nicht - verteilt wurde nach der Wasserregel."
                     )
                 allocation = self._allocator.allocate_components(
-                    cost, position.components, apartments, billed_tenants, position.consumption
+                    cost, position.components, cost_apartments, billed_tenants, position.consumption
                 )
             else:
                 needs_consumption = AllocationKey.CONSUMPTION in overrides.values()
                 consumption = self._consumption_for(cost, apartments, result, force=needs_consumption)
-                allocation = self._allocator.allocate(cost, apartments, billed_tenants, consumption, overrides)
+                allocation = self._allocator.allocate(cost, cost_apartments, billed_tenants, consumption, overrides)
             result.vacancy_amount += allocation.vacancy_amount
             result.owner_amount += allocation.owner_amount
             result.deviation_amount += allocation.deviation_amount

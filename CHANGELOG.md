@@ -25,7 +25,11 @@ automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
   Warmwasserbereitung“ bei Heiz- und Warmwasserrechnungen (z. B. der Messdienst-Abrechnung der
   verbundenen Heizungs- und Warmwasserversorgung). Ist er gesetzt und deckt die Rechnung den
   Zeitraum ab, entfällt die eigene Position „Warmwasser – Kaltwasseranteil“ (ein Hinweis nennt
-  Menge und Betrag). Die Datenbank wird dafür auf Version 13 angepasst.
+  Menge und Betrag).
+- **Belegungshistorie je Wohnung:** Änderungen der Personenzahl (Geburt, Einzug, Auszug) werden im
+  Wohnungsdialog mit „ab“-Datum eingetragen. Der Schlüssel Personenzahl rechnet je Zeitraum
+  tagesgenau mit der damals gültigen Belegung (Personentage); Abrechnungen früherer Jahre bleiben
+  dadurch unverändert. Die Datenbank wird dafür auf Version 14 angepasst.
 - **Nicht umlegbare Kosten:** Neuer Umlageschlüssel „Nicht umlegbar (trägt Eigentümer)“ für alle
   Kostenarten, z. B. für die Miete der Rauchwarnmelder. Solche Rechnungen erscheinen in keiner
   Mieterabrechnung, zählen aber in den Gesamtkosten; die Abrechnung weist sie als „nicht umlegbar“ aus.

@@ -426,7 +426,7 @@ class TestColdWaterInHeatingCosts:
             "VALUES (1, 1, 'Alt', 1000, '2025-01-01', '2025-12-31', 'AREA')"
         )
         migrate(connection, None)
-        assert current_version(connection) == 13
+        assert current_version(connection) >= 13
         assert connection.execute("SELECT includes_cold_water FROM costs").fetchone()[0] == 0
 
 

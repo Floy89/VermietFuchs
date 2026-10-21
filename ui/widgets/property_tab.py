@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QSplitter, QWidget
 
@@ -79,7 +81,9 @@ class PropertyTab(BaseTab):
             [
                 Column("Nummer", lambda a: a.number),
                 Column("Wohnfläche", lambda a: f"{format_decimal(a.area_sqm)} m²", lambda a: float(a.area_sqm), True),
-                Column("Personen", lambda a: str(a.person_count), lambda a: a.person_count, True),
+                Column(
+                    "Personen", lambda a: str(a.persons_on(date.today())), lambda a: a.persons_on(date.today()), True
+                ),
                 Column(
                     "Aktueller Mieter",
                     lambda a: self._lookups.current_tenant_name(a.id) if self._lookups else "",

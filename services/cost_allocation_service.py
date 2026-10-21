@@ -77,7 +77,9 @@ class PersonWeight:
     unit: str = "Pers."
 
     def weight(self, apartment: Apartment, consumption: ConsumptionMap) -> Decimal:
-        """Die Anzahl der in der Wohnung gemeldeten Personen."""
+        """Die Anzahl der Personen - im Zeitraum der Position tagesgenau gemittelt, falls bekannt."""
+        if apartment.persons_in_period is not None:
+            return apartment.persons_in_period
         return Decimal(apartment.person_count)
 
 

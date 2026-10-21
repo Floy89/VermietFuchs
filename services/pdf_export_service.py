@@ -223,7 +223,10 @@ class PdfExportService:
         rows = [
             ("Objekt", object_text),
             ("Wohnung", apartment.number),
-            ("Wohnfläche / Personen", f"{format_quantity(apartment.area_sqm)} m² / {apartment.person_count}"),
+            (
+                "Wohnfläche / Personen",
+                f"{format_quantity(apartment.area_sqm)} m² / {apartment.describe_persons(statement.occupancy)}",
+            ),
             ("Abrechnungszeitraum", f"{format_period(result.period)} ({result.period.days} Tage)"),
             ("Ihr Abrechnungszeitraum", f"{format_period(statement.occupancy)} ({statement.occupancy.days} Tage)"),
         ]

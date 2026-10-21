@@ -446,7 +446,7 @@ bestimmt der Mietvertrag. Seit 01.07.2024 nicht mehr umlagefähig sind z. B. Kab
 | Schlüssel | Bedeutung | Verfügbar für |
 |---|---|---|
 | Wohnfläche | Anteil nach m² | alle außer Heizkosten |
-| Personenzahl | Anteil nach Personen je Wohnung | alle außer Heizkosten |
+| Personenzahl | Anteil nach Personen je Wohnung - bei einer Änderung im Zeitraum tagesgenau gemittelt (Belegungshistorie im Wohnungsdialog) | alle außer Heizkosten |
 | Wohneinheiten | jede Wohnung gleich (z. B. Grundpreise) | alle außer Heizkosten |
 | Verbrauch | nach Zählerständen der Wohnungen | Kostenarten mit Zähler |
 | Verbrauch + Wohnfläche | 50–70 % Verbrauch, Rest Fläche (HeizkostenV § 7) | Heizung, Warmwasser |

@@ -47,6 +47,7 @@ FIELD_LABELS: Final[Mapping[str, str]] = {
     "number": "Nummer",
     "area_sqm": "Fläche",
     "person_count": "Personen",
+    "person_changes": "Personen-Änderungen",
     "contact": "Kontakt",
     "start_date": "Beginn",
     "valid_from": "gültig ab",

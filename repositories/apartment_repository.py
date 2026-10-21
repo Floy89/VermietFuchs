@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from models.apartment import Apartment
+from models.apartment import Apartment, PersonChange
 from repositories.base_repository import SqliteRepository
 
 
@@ -29,6 +30,12 @@ class SqliteApartmentRepository(SqliteRepository[Apartment]):
             "number": entity.number,
             "area_sqm": str(entity.area_sqm),
             "person_count": entity.person_count,
+            "person_changes": json.dumps(
+                [
+                    {"from": change.valid_from.isoformat(), "persons": change.person_count}
+                    for change in sorted(entity.person_changes, key=lambda c: c.valid_from)
+                ]
+            ),
             "created_at": entity.created_at.isoformat(timespec="seconds"),
         }
 
@@ -39,5 +46,9 @@ class SqliteApartmentRepository(SqliteRepository[Apartment]):
             number=row["number"],
             area_sqm=Decimal(row["area_sqm"]),
             person_count=row["person_count"],
+            person_changes=[
+                PersonChange(date.fromisoformat(raw["from"]), int(raw["persons"]))
+                for raw in json.loads(row["person_changes"] or "[]")
+            ],
             created_at=datetime.fromisoformat(row["created_at"]),
         )
