@@ -7,7 +7,7 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
-## [Unveröffentlicht]
+## [1.2.0] - 2026-10-21
 
 ### Neu
 
@@ -105,5 +105,6 @@ Erste veröffentlichte Version.
 - Optionale Belegerkennung über ein lokal laufendes KI-Modell (Ollama).
 - Mehrere Benutzer mit eigener Datenbank, Änderungsprotokoll, helles und dunkles Design.
 
+[1.2.0]: https://github.com/Floy89/VermietFuchs/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Floy89/VermietFuchs/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Floy89/VermietFuchs/releases/tag/v1.0.0
