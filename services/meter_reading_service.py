@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from models.enums import MeterType, PhotoCategory
-from models.meter_reading import MeterReading, calculate_consumption, enclosing_pair
+from models.meter_reading import MeterReading, calculate_consumption, enclosing_pair, reading_pair
 from models.photo import Photo
 from models.value_objects import DateRange
 from repositories.interfaces import (
@@ -118,6 +118,27 @@ class MeterReadingService:
             consumption = calculate_consumption(readings, period)
             if consumption is not None:
                 result[apartment_id] = consumption
+        return result
+
+    def reading_pairs_by_apartment(
+        self,
+        property_id: int,
+        meter_type: MeterType,
+        period: DateRange,
+    ) -> dict[int, tuple[MeterReading, MeterReading]]:
+        """Anfangs- und Endablesung je Wohnung, aus denen der Verbrauch im Zeitraum berechnet wird.
+
+        Gleiche Regeln wie :meth:`consumption_by_apartment`; Wohnungen ohne zwei
+        passende Ablesungen oder mit rückläufigem Zähler fehlen im Ergebnis.
+        """
+        readings_by_apartment: dict[int, list[MeterReading]] = defaultdict(list)
+        for reading in self._readings.list_for_property_and_type(property_id, meter_type):
+            readings_by_apartment[reading.apartment_id].append(reading)
+        result: dict[int, tuple[MeterReading, MeterReading]] = {}
+        for apartment_id, readings in readings_by_apartment.items():
+            pair = reading_pair(readings, period)
+            if pair is not None and pair[1].value >= pair[0].value:
+                result[apartment_id] = pair
         return result
 
     def consumption_enclosing(

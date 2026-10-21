@@ -7,6 +7,40 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
+## [Unveröffentlicht]
+
+### Neu
+
+- **Wasserregel** für Wasserrechnungen (Rechnungsdialog → „Verbrauchsdifferenz“ →
+  „Wasserregel …“). Die Wasserrechnungen des Abrechnungszeitraums werden gemeinsam aufgeteilt:
+  Grundgebühr (aus dem Grundpreis der Splits) zu gleichen Teilen je Wohnung, der Mengenpreis
+  für das Wasser der Wohnungszähler nach Verbrauch, das Kaltwasser für die Warmwasserbereitung
+  (Warmwasserzähler, z. B. Ablesewerte der ISTA-Abrechnung) als eigene Position
+  „Warmwasser – Kaltwasseranteil“ nach Warmwasserverbrauch, die Restmenge (Heizungsnachspeisung,
+  Zapfstellen, Verluste) nach Wohnfläche. Fehlen Zählerstände am Anfang oder Ende des Zeitraums,
+  gibt es einen Hinweis und die bisherige Verteilung. Zählerstände mit „Platzhalter“ in der
+  Bemerkung werden in der Abrechnung gemeldet.
+- **Heizkostenrechnung mit Kaltwasser:** Neuer Haken „Enthält das Kaltwasser für die
+  Warmwasserbereitung“ bei Heiz- und Warmwasserrechnungen (z. B. der Messdienst-Abrechnung der
+  verbundenen Heizungs- und Warmwasserversorgung). Ist er gesetzt und deckt die Rechnung den
+  Zeitraum ab, entfällt die eigene Position „Warmwasser – Kaltwasseranteil“ (ein Hinweis nennt
+  Menge und Betrag). Die Datenbank wird dafür auf Version 13 angepasst.
+- **Nicht umlegbare Kosten:** Neuer Umlageschlüssel „Nicht umlegbar (trägt Eigentümer)“ für alle
+  Kostenarten, z. B. für die Miete der Rauchwarnmelder. Solche Rechnungen erscheinen in keiner
+  Mieterabrechnung, zählen aber in den Gesamtkosten; die Abrechnung weist sie als „nicht umlegbar“ aus.
+
+### Geändert
+
+- **Abrechnungsschreiben (PDF):** Die Kostenaufstellung nennt nur noch die Kostenart, nicht mehr
+  Lieferant und Rechnung. Rechnungen derselben Kostenart, die gleich verteilt werden, stehen in
+  einer Zeile. Die Übersicht in der App zeigt weiterhin jede Rechnung einzeln.
+- **Reihenfolge der Positionen** in Abrechnung und PDF nach dem Katalog der Kostenarten
+  (§ 2 BetrKV), innerhalb einer Kostenart nach Datum - statt nach Rechnungsbeginn.
+- **CO2-Kosten je Jahr:** Bei Rechnungen über einen Jahreswechsel ohne CO2-Angabe je Zeitraum,
+  aber mit Emissionsfaktor, wird der CO2-Ausstoß eines Jahres aus seinen kWh berechnet und mit
+  dem CO2-Preis dieses Jahres bewertet (2024: 45 €/t, 2025: 55 €/t, 2026: 60 €/t, zzgl. 19 %
+  USt) - statt die Summe mit Mischpreis nach kWh aufzuteilen.
+
 ## [1.1.0] - 2026-10-15
 
 ### Neu

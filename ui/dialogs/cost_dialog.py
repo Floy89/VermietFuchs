@@ -29,6 +29,7 @@ from models.cost import (
     DIFFERENCE_KEYS,
     MAX_CONSUMPTION_SHARE,
     MIN_CONSUMPTION_SHARE,
+    WATER_RULES_LABEL,
     Cost,
     validate_splits,
 )
@@ -254,6 +255,14 @@ class CostDialog(FormDialog):
         self._co2_row.setLayout(co2_row)
         co2_row.setContentsMargins(0, 0, 0, 0)
 
+        # Nur Heiz-/Warmwasserkosten: Rechnet der Messdienst das Kaltwasser für das Warmwasser mit ab?
+        self._cold_water_check = QCheckBox("Enthält das Kaltwasser für die Warmwasserbereitung")
+        self._cold_water_check.setToolTip(
+            "Setzen, wenn diese Rechnung (z. B. die Messdienst-Abrechnung der verbundenen Heizungs- und "
+            "Warmwasserversorgung) die Kosten des Kaltwassers für das Warmwasser schon enthält. Dann weist die "
+            "Wasserregel diesen Anteil nicht noch einmal als eigene Position aus."
+        )
+
         # Splits (Teilabschnitte laut Rechnung) werden in einem eigenen Dialog gepflegt.
         self._splits: list[InvoiceSplit] = list(cost.splits) if cost else []
         self._splits_button = make_button(
@@ -290,7 +299,11 @@ class CostDialog(FormDialog):
             self._difference_combo,
             [
                 (
-                    "wie gemessener Verbrauch" if key is AllocationKey.CONSUMPTION else f"nach {key.label}",
+                    "wie gemessener Verbrauch"
+                    if key is AllocationKey.CONSUMPTION
+                    else WATER_RULES_LABEL
+                    if key is AllocationKey.WATER_RULES
+                    else f"nach {key.label}",
                     key,
                 )
                 for key in DIFFERENCE_KEYS
@@ -307,6 +320,7 @@ class CostDialog(FormDialog):
         self.form.addRow("", self._period_hint)
         self.form.addRow("Verbrauch laut Rechnung", consumption_row)
         self.form.addRow("CO2 laut Rechnung", self._co2_row)
+        self.form.addRow("Warmwasser", self._cold_water_check)
         self.form.addRow("Splits", splits_row)
         self.form.addRow("Umlageschlüssel", self._key_combo)
         self.form.addRow("Verbrauchsanteil", self._share_spin)
@@ -341,6 +355,7 @@ class CostDialog(FormDialog):
             self._co2_emission_spin.set_decimal(cost.co2_emission or Decimal(0))
             self._co2_factor_spin.set_decimal(cost.co2_factor or Decimal(0))
             self._excluded_check.setChecked(cost.excluded)
+            self._cold_water_check.setChecked(cost.includes_cold_water)
             select_data(self._difference_combo, cost.difference_key)
 
         self._update_splits_label()
@@ -644,6 +659,7 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
         self._basis_label.setText(cost_type.legal_basis or "Eigene Kostenart")
         # CO2-Kostenaufteilungsgesetz: gilt für Brennstoffe von Heizung und Warmwasser.
         self.form.setRowVisible(self._co2_row, cost_type.heating_rule)
+        self.form.setRowVisible(self._cold_water_check, cost_type.heating_rule)
         # Einheit des Verbrauchs vorschlagen, solange der Benutzer keine eingetragen hat.
         if not self._unit_edit.text().strip() and cost_type.meter_type is not None:
             self._unit_edit.setText(cost_type.meter_type.unit)
@@ -690,6 +706,11 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
             )
         elif key is AllocationKey.UNITS:
             hint = "Jede Wohnung trägt den gleichen Anteil - unabhängig von Größe und Personenzahl."
+        elif key is AllocationKey.OWNER:
+            hint = (
+                "Die Kosten trägt der Eigentümer allein (z. B. Miete der Rauchwarnmelder, Verwaltung, "
+                "Reparaturen). Sie erscheinen in keiner Mieterabrechnung, zählen aber in der Übersicht mit."
+            )
         elif key is AllocationKey.CONSUMPTION:
             hint = (
                 "Verteilung nach den Zählerständen der Wohnungen im Zeitraum der Position. Ist oben ein "
@@ -749,6 +770,7 @@ f"Übernommen: {', '.join(applied)}. Bitte alle Werte prüfen."
             "consumption_unit": self._unit_edit.text() if self._consumption_spin.value() > 0 else "",
             "excluded": self._excluded_check.isChecked(),
             **self._co2_values(cost_type),
+            "includes_cold_water": cost_type.heating_rule and self._cold_water_check.isChecked(),
             "difference_key": (
                 self._difference_combo.currentData() if key is AllocationKey.CONSUMPTION else AllocationKey.CONSUMPTION
             ),

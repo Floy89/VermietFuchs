@@ -32,7 +32,7 @@ class TestCatalog:
 
     def test_heating_types_follow_heating_rule(self, context: AppContext) -> None:
         heating = context.cost_types.get_by_name("Verbundene Heizungs- und Warmwasserversorgung")
-        assert heating.allowed_keys() == (AllocationKey.CONSUMPTION_AREA, AllocationKey.DIRECT)
+        assert heating.allowed_keys() == (AllocationKey.CONSUMPTION_AREA, AllocationKey.DIRECT, AllocationKey.OWNER)
 
     def test_builtin_types_are_protected(self, context: AppContext) -> None:
         builtin = context.cost_types.get_by_name("Grundsteuer")

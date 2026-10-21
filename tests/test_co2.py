@@ -6,6 +6,7 @@ eine Tabelle je Zeitraum mit "Gesamtkosten" und ein Absatz mit den Pflichtangabe
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -13,8 +14,9 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from app_context import AppContext
-from models.cost import Cost, InvoiceSplit
-from models.enums import AllocationKey
+from models.cost import CO2_PRICE_EUR_PER_T, CO2_VAT_RATE, Cost, InvoiceSplit
+from models.cost_type import CostType
+from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
 from models.property import Property
 from models.value_objects import DateRange, Money
@@ -221,3 +223,145 @@ class TestDialog:
         assert dialog._co2_emission_spin.decimal_value() == Decimal("7447.51")
         assert dialog._co2_factor_spin.decimal_value() == Decimal("0.1813900")
         assert "CO2-Angaben" in dialog._scan_info.text()
+
+
+# ---------------------------------------------------------------------- #
+# CO2-Preis je Jahr bei Rechnungen ohne CO2-Angabe je Zeitraum
+# (echte Werte der Gasrechnungen 2024-2026)
+# ---------------------------------------------------------------------- #
+GAS = CostType("Brennstoffkosten (Gas/Öl)", AllocationKey.CONSUMPTION_AREA, MeterType.HEATING, heating_rule=True, id=33)
+FACTOR = Decimal("0.1813900")
+
+
+def _split(start: date, end: date, amount: str, kwh: str, **co2: object) -> InvoiceSplit:
+    return InvoiceSplit(DateRange(start, end), Money.from_decimal(amount), Decimal(kwh), **co2)  # type: ignore[arg-type]
+
+
+def _gruenwelt_annual() -> Cost:
+    """Grünwelt 01.06.2024–31.05.2025: CO2 nur als Summe (7.438,44 kg / 447,00 €), Mischpreis 45/55 €/t."""
+    return Cost(
+        1, GAS, Money.from_decimal("3114.15"), DateRange(date(2024, 6, 1), date(2025, 5, 31)),
+        AllocationKey.CONSUMPTION_AREA, consumption=Decimal("41008"), consumption_unit="kWh",
+        co2_cost=Money.from_decimal("447.00"), co2_emission=Decimal("7438.44"), co2_factor=FACTOR,
+        splits=[
+            _split(date(2024, 6, 1), date(2024, 6, 30), "108.23", "1292"),
+            _split(date(2024, 7, 1), date(2024, 9, 30), "275.10", "3163"),
+            _split(date(2024, 10, 1), date(2024, 12, 31), "1046.03", "14011"),
+            _split(date(2025, 1, 1), date(2025, 5, 31), "1684.79", "22542"),
+        ],
+        id=44,
+    )
+
+
+def _gruenwelt_final() -> Cost:
+    """Grünwelt-Schlussrechnung 01.06.–04.07.2025 mit eigener Angabe 111,55 kg / 7,31 €."""
+    return Cost(
+        1, GAS, Money.from_decimal("92.31"), DateRange(date(2025, 6, 1), date(2025, 7, 4)),
+        AllocationKey.CONSUMPTION_AREA, consumption=Decimal("615"), consumption_unit="kWh",
+        co2_cost=Money.from_decimal("7.31"), co2_emission=Decimal("111.55"), co2_factor=FACTOR,
+        splits=[
+            _split(date(2025, 6, 1), date(2025, 6, 30), "84.48", "570"),
+            _split(date(2025, 7, 1), date(2025, 7, 4), "7.83", "45"),
+        ],
+        id=43,
+    )
+
+
+def _maingau() -> Cost:
+    """Maingau 05.07.2025–30.06.2026 mit CO2-Angaben je Zeitraum."""
+    return Cost(
+        1, GAS, Money.from_decimal("4130.51"), DateRange(date(2025, 7, 5), date(2026, 6, 30)),
+        AllocationKey.CONSUMPTION_AREA, consumption=Decimal("41058"), consumption_unit="kWh",
+        co2_cost=Money.from_decimal("513.46"), co2_emission=Decimal("7447.51"), co2_factor=FACTOR,
+        splits=[
+            _split(date(2025, 7, 5), date(2025, 12, 31), "1754.71", "16949",
+                   co2_cost=Money.from_decimal("201.22"), co2_emission=Decimal("3074.38")),
+            _split(date(2026, 1, 1), date(2026, 6, 30), "2375.80", "24109",
+                   co2_cost=Money.from_decimal("312.24"), co2_emission=Decimal("4373.13")),
+        ],
+        id=42,
+    )
+
+
+def _co2_cost(kg: Decimal, year: int) -> Money:
+    return Money.from_decimal(kg / 1000 * CO2_PRICE_EUR_PER_T[year] * (1 + CO2_VAT_RATE))
+
+
+class TestCo2PricePerYear:
+    def test_constants(self) -> None:
+        assert CO2_PRICE_EUR_PER_T == {2024: Decimal("45"), 2025: Decimal("55"), 2026: Decimal("60")}
+        assert CO2_VAT_RATE == Decimal("0.19")
+
+    def test_2025_part_is_priced_at_55_euro(self) -> None:
+        invoice = _gruenwelt_annual()
+        (piece,) = invoice.pieces(DateRange.for_year(2025))
+
+        assert piece.consumption == Decimal("22542")
+        # 22.542 kWh × 0,18139 kg/kWh = 4.088,89 kg; × 55 €/t × 1,19 = 267,62 €.
+        assert piece.co2_emission == Decimal("4088.89")
+        assert piece.co2_cost == Money.from_decimal("267.62")
+        # Bisher: 447,00 € nach kWh-Anteil - der Mischpreis aus 2024 und 2025.
+        assert Money.from_decimal(Decimal("447.00") * 22542 / 41008) == Money.from_decimal("245.71")
+        prorated = invoice.prorate(DateRange.for_year(2025))
+        assert prorated is not None and prorated.co2_cost == Money.from_decimal("267.62")
+
+    def test_2024_parts_are_priced_at_45_euro(self) -> None:
+        pieces = _gruenwelt_annual().pieces(DateRange.for_year(2024))
+
+        assert [piece.consumption for piece in pieces] == [Decimal("1292"), Decimal("3163"), Decimal("14011")]
+        june = pieces[0]
+        assert june.period == DateRange(date(2024, 6, 1), date(2024, 6, 30))
+        assert june.co2_emission == Decimal("234.36")  # 1.292 kWh × 0,18139
+        assert june.co2_cost == Money.from_decimal("12.55") == _co2_cost(Decimal("234.36"), 2024)
+        for piece in pieces:
+            assert piece.co2_emission is not None
+            assert piece.co2_cost == _co2_cost(piece.co2_emission, 2024)
+
+    def test_stored_invoice_value_is_unchanged(self) -> None:
+        invoice = _gruenwelt_annual()
+        invoice.pieces(DateRange.for_year(2025))
+        assert (invoice.co2_cost, invoice.co2_emission) == (Money.from_decimal("447.00"), Decimal("7438.44"))
+        # Über die ganze Rechnung gilt weiter ihre eigene Angabe.
+        whole = invoice.prorate(invoice.period)
+        assert whole is invoice and whole.co2_cost == Money.from_decimal("447.00")
+
+    def test_final_invoice_within_one_year_is_unchanged(self) -> None:
+        invoice = _gruenwelt_final()
+        prorated = invoice.prorate(DateRange.for_year(2025))
+        assert prorated is not None
+        assert (prorated.co2_cost, prorated.co2_emission) == (Money.from_decimal("7.31"), Decimal("111.55"))
+        # Auch die Stücke der Abrechnung ergeben die Angabe der Rechnung (nicht 7,30 € aus kWh × Preis).
+        pieces = invoice.pieces(DateRange.for_year(2025))
+        assert sum((piece.co2_cost or Money.zero() for piece in pieces), Money.zero()) == Money.from_decimal("7.31")
+
+    def test_invoice_with_co2_per_period_is_unchanged(self) -> None:
+        invoice = _maingau()
+        part_2025 = invoice.prorate(DateRange.for_year(2025))
+        part_2026 = invoice.prorate(DateRange.for_year(2026))
+        assert part_2025 is not None and part_2026 is not None
+        assert (part_2025.co2_cost, part_2025.co2_emission) == (Money.from_decimal("201.22"), Decimal("3074.38"))
+        assert (part_2026.co2_cost, part_2026.co2_emission) == (Money.from_decimal("312.24"), Decimal("4373.13"))
+
+    def test_piece_across_a_year_boundary_keeps_the_share_of_the_invoice(self) -> None:
+        # Ohne Splits: Ein Ausschnitt 01.12.2024–31.01.2025 hat keinen einheitlichen Jahrespreis.
+        invoice = replace(_gruenwelt_annual(), splits=[])
+        (piece,) = invoice.pieces(DateRange(date(2024, 12, 1), date(2025, 1, 31)))
+        assert piece.consumption is not None
+        assert piece.co2_cost == Money.from_decimal(Decimal("447.00") * piece.consumption / 41008)
+
+    def test_calendar_year_2025_cross_check(self, context: AppContext) -> None:
+        house = context.properties.save_property(Property(name="Gashaus", address="Weg 9, 12345 Ort"))
+        assert house.id is not None
+        gas = context.cost_types.get_by_name("Brennstoffkosten (Gas/Öl)")
+        for invoice in (_gruenwelt_annual(), _gruenwelt_final(), _maingau()):
+            context.costs.save_cost(replace(invoice, property_id=house.id, cost_type=gas, id=None))
+
+        (group,) = context.invoice_groups.groups(house.id, 2025)
+        assert group.total_consumption == Decimal("40106")
+        # Gegenprobe über das ganze Jahr: 40.106 kWh × 0,18139 = 7.274,83 kg -> 476,14 € brutto.
+        expected_kg = (Decimal(40106) * FACTOR).quantize(Decimal("0.01"))
+        assert expected_kg == Decimal("7274.83") and _co2_cost(expected_kg, 2025) == Money.from_decimal("476.14")
+        # Summe der Rechnungen: 4.088,89 + 111,55 + 3.074,38 kg bzw. 267,62 + 7,31 + 201,22 €. Je ein
+        # Rundungscent Abstand: Jede Rechnung rundet für sich, die Schlussrechnung weist 7,31 € aus (exakt 7,30 €).
+        assert group.total_co2_emission == Decimal("7274.82")
+        assert group.total_co2_cost == Money.from_decimal("476.15")

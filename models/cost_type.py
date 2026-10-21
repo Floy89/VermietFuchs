@@ -54,6 +54,7 @@ class CostType:
           Zuordnung (Abrechnung eines Messdienstes).
         * Alle anderen: Wohnfläche, Personenzahl, Wohneinheiten, direkte
           Zuordnung - und Verbrauch, sofern es einen passenden Zähler gibt.
+        * Immer zuletzt: "nicht umlegbar" - die Rechnung trägt der Eigentümer allein.
         """
         if self.heating_rule:
             keys = [AllocationKey.CONSUMPTION_AREA, AllocationKey.DIRECT]
@@ -61,6 +62,7 @@ class CostType:
             keys = [AllocationKey.AREA, AllocationKey.PERSONS, AllocationKey.UNITS, AllocationKey.DIRECT]
             if self.meter_type is not None:
                 keys.insert(0, AllocationKey.CONSUMPTION)
+        keys.append(AllocationKey.OWNER)
         if self.default_key in keys:
             keys.remove(self.default_key)
             keys.insert(0, self.default_key)

@@ -8,6 +8,7 @@ Er rechnet selbst nichts - die Zahlen im PDF sind exakt die der Oberfläche.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
@@ -30,9 +31,10 @@ from reportlab.platypus import (
 )
 
 import config
-from models.billing import BillingResult, TenantStatement
+from models.billing import BillingResult, CostShare, TenantStatement
 from models.exceptions import ExportError, ValidationError
 from models.settings import LandlordSettings
+from models.value_objects import Money
 from utils.formatters import (
     format_date,
     format_money,
@@ -247,13 +249,13 @@ class PdfExportService:
         data[0][1] = Paragraph("<b>Gesamtkosten</b>", self._cell_right)
         data[0][3] = Paragraph("<b>Ihr Anteil</b>", self._cell_right)
 
-        for share in statement.shares:
+        for line in category_lines(statement.shares):
             data.append(
                 [
-                    Paragraph(escape(format_share_title(share)), self._cell),
-                    Paragraph(format_money(share.component_amount), self._cell_right),
-                    Paragraph(escape(format_share_basis(share)), self._cell),
-                    Paragraph(format_money(share.amount), self._cell_right),
+                    Paragraph(escape(line.title), self._cell),
+                    Paragraph(format_money(line.total), self._cell_right),
+                    Paragraph(escape(line.basis), self._cell),
+                    Paragraph(format_money(line.amount), self._cell_right),
                 ]
             )
         if not statement.shares:
@@ -373,3 +375,43 @@ class PdfExportService:
         canvas.drawString(22 * mm, 10 * mm, f"Erstellt mit {config.APP_NAME} {config.APP_VERSION}")
         canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Seite {document.page}")
         canvas.restoreState()
+
+
+@dataclass(frozen=True)
+class CategoryLine:
+    """Eine Zeile der Kostenaufstellung im Schreiben: Kategorie statt einzelner Rechnung."""
+
+    title: str
+    total: Money
+    basis: str
+    amount: Money
+
+
+def category_lines(shares: Sequence[CostShare]) -> list[CategoryLine]:
+    """Die Kostenanteile eines Mieters als Zeilen je Kategorie (Kostenart), ohne Lieferant.
+
+    Anteile derselben Kostenart und desselben Bestandteils, die gleich verteilt
+    werden (gleiche Bezugsgrößen, ganzer Zeitraum bewohnt), werden zu einer Zeile
+    zusammengefasst - z. B. zwei Stromrechnungen, die beide ins Jahr fallen.
+    Andere Anteile bleiben eigene Zeilen, damit die Rechnung nachvollziehbar bleibt.
+    """
+    lines: list[CategoryLine] = []
+    merged: dict[tuple[object, ...], int] = {}
+    for share in shares:
+        title = share.cost.cost_type.label
+        if share.component_amount != share.cost.amount:
+            title += f" ({share.component})"
+        basis = format_share_basis(share)
+        key: tuple[object, ...] | None = None
+        if share.days == share.period_days and share.quantity is None and not share.is_difference:
+            key = (title, basis)
+        if key is not None and key in merged:
+            index = merged[key]
+            line = lines[index]
+            lines[index] = CategoryLine(title, line.total + share.component_amount, basis, line.amount + share.amount)
+            continue
+        if key is not None:
+            merged[key] = len(lines)
+        lines.append(CategoryLine(title, share.component_amount, basis, share.amount))
+    return lines
+

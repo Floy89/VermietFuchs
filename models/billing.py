@@ -207,6 +207,7 @@ class BillingResult:
             wird *weniger* umgelegt als nach dem Standard (negativ = es wird
             mehr umgelegt). Ohne abweichende Schlüssel immer 0,00 €.
         warnings: Hinweise für den Benutzer, z. B. fehlende Zählerstände.
+        owner_amount: Summe der nicht umlegbaren Positionen (trägt der Eigentümer).
     """
 
     property: Property
@@ -216,6 +217,7 @@ class BillingResult:
     vacancy_amount: Money = Money.zero()
     deviation_amount: Money = Money.zero()
     warnings: list[str] = field(default_factory=list)
+    owner_amount: Money = Money.zero()
 
     @property
     def total_costs(self) -> Money:

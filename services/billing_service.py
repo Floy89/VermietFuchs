@@ -5,14 +5,15 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from models.apartment import Apartment
 from models.billing import BillingPeriodOverride, BillingResult, TenantStatement
 from models.cost import Cost
-from models.enums import AllocationKey
+from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
+from models.meter_reading import READING_TOLERANCE_DAYS, MeterReading
 from models.prepayment_rate import PrepaymentRate, expected_prepayment, rate_on
 from models.tenant import Tenant
 from models.value_objects import DateRange
@@ -24,11 +25,18 @@ from repositories.interfaces import (
     PropertyRepository,
     TenantRepository,
 )
-from services.cost_allocation_service import CostAllocationService
+from services.cost_allocation_service import CostAllocationService, same_unit
 from services.invoice_group_service import InvoiceGroupService
 from services.key_override_service import KeyOverrideService
 from services.meter_reading_service import MeterReadingService
-from utils.formatters import format_money, format_period
+from services.water_allocation import (
+    PLACEHOLDER_MARK,
+    WaterBreakdown,
+    WaterPosition,
+    water_breakdown,
+    water_positions,
+)
+from utils.formatters import format_money, format_period, format_quantity
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +105,9 @@ class BillingService:
         invoices = self._billable_invoices(property_id, period)
         result.costs = self._cut_to_period(invoices, period)
         self._warn_about_split_gaps(invoices, period, result)
+        water = self._apply_water_rules(property_id, apartments, result)
+        # Reihenfolge wie im Katalog der Kostenarten (§ 2 BetrKV), innerhalb einer Kostenart nach Datum.
+        result.costs.sort(key=lambda cost: (cost.cost_type.sort_order, cost.cost_type.name.casefold(), cost.period.start))
 
         overrides = {o.tenant_id: o.billed for o in self._overrides.list_by_period(period)}
         rates_by_tenant: dict[int, list[PrepaymentRate]] = defaultdict(list)
@@ -151,10 +162,22 @@ class BillingService:
         all_overrides = self._key_overrides.keys_by_tenant(property_id)
         for cost in result.costs:
             overrides = self._overrides_for(cost, all_overrides)
-            needs_consumption = AllocationKey.CONSUMPTION in overrides.values()
-            consumption = self._consumption_for(cost, apartments, result, force=needs_consumption)
-            allocation = self._allocator.allocate(cost, apartments, billed_tenants, consumption, overrides)
+            position = water.get(id(cost))
+            if position is not None:
+                if overrides:
+                    result.warnings.append(
+                        f"'{cost.title}': Abweichende Umlageschlüssel einzelner Mieter gelten bei der Wasserregel "
+                        "nicht - verteilt wurde nach der Wasserregel."
+                    )
+                allocation = self._allocator.allocate_components(
+                    cost, position.components, apartments, billed_tenants, position.consumption
+                )
+            else:
+                needs_consumption = AllocationKey.CONSUMPTION in overrides.values()
+                consumption = self._consumption_for(cost, apartments, result, force=needs_consumption)
+                allocation = self._allocator.allocate(cost, apartments, billed_tenants, consumption, overrides)
             result.vacancy_amount += allocation.vacancy_amount
+            result.owner_amount += allocation.owner_amount
             result.deviation_amount += allocation.deviation_amount
             result.warnings.extend(allocation.warnings)
             for tenant_id, shares in allocation.shares_by_tenant.items():
@@ -251,6 +274,144 @@ class BillingService:
                 self._overrides.delete(override.id)
 
     # ------------------------------------------------------------------ #
+    # Wasserregel
+    # ------------------------------------------------------------------ #
+    def _apply_water_rules(
+        self, property_id: int, apartments: list[Apartment], result: BillingResult
+    ) -> dict[int, WaterPosition]:
+        """Fasst die Wasserrechnungen mit Wasserregel zu Positionen für den ganzen Zeitraum zusammen.
+
+        Ersetzt in ``result.costs`` die Ausschnitte dieser Rechnungen durch die
+        Positionen aus :func:`~services.water_allocation.water_positions` (Wasser-
+        versorgung und Warmwasser-Kaltwasseranteil). Fehlt etwas, das die Regel
+        braucht (Zählerstände, lückenlose Rechnungen), bleibt es mit einem Hinweis
+        bei der gewöhnlichen Verteilung je Abschnitt.
+
+        Returns:
+            Die neuen Positionen, nach ``id()`` ihrer Kostenposition.
+        """
+        for cost in result.costs:
+            if cost.difference_key is AllocationKey.WATER_RULES and cost.consumption is None:
+                result.warnings.append(
+                    f"'{cost.title}': Für die Wasserregel fehlt der Gesamtverbrauch laut Rechnung - "
+                    "verteilt wurde nach gemessenem Verbrauch."
+                )
+        groups: dict[int | None, list[Cost]] = defaultdict(list)
+        for cost in result.costs:
+            if cost.uses_water_rules:
+                groups[cost.cost_type.id].append(cost)
+
+        heating_with_cold_water = [cost for cost in result.costs if cost.includes_cold_water]
+        positions: dict[int, WaterPosition] = {}
+        for pieces in groups.values():
+            new_positions = self._water_positions(property_id, apartments, pieces, heating_with_cold_water, result)
+            if not new_positions:
+                continue
+            index = next(i for i, cost in enumerate(result.costs) if cost is pieces[0])
+            replaced = {id(piece) for piece in pieces}
+            before = [cost for cost in result.costs[:index] if id(cost) not in replaced]
+            after = [cost for cost in result.costs[index:] if id(cost) not in replaced]
+            result.costs = [*before, *(position.cost for position in new_positions), *after]
+            positions.update({id(position.cost): position for position in new_positions})
+        return positions
+
+    def _water_positions(
+        self,
+        property_id: int,
+        apartments: list[Apartment],
+        pieces: list[Cost],
+        heating_with_cold_water: list[Cost],
+        result: BillingResult,
+    ) -> list[WaterPosition]:
+        """Lädt die Zählerstände und teilt die Rechnungen nach der Wasserregel auf ([] = nicht anwendbar)."""
+        pieces = sorted(pieces, key=lambda piece: piece.period.start)
+        title = pieces[0].cost_type.label
+        fallback = "die Rechnungen wurden ohne Wasserregel je Abschnitt verteilt."
+        if any(not same_unit(piece.consumption_unit, MeterType.COLD_WATER.unit) for piece in pieces):
+            result.warnings.append(f"'{title}': Die Wasserregel braucht den Gesamtverbrauch in m³ - {fallback}")
+            return []
+        for previous, piece in zip(pieces, pieces[1:]):
+            if (piece.period.start - previous.period.end).days > 1:
+                result.warnings.append(
+                    f"'{title}': Zwischen {format_period(previous.period)} und {format_period(piece.period)} fehlt "
+                    f"eine Rechnung - der Verbrauch der Zähler passt nicht zum Gesamtverbrauch, {fallback}"
+                )
+                return []
+        period = DateRange(pieces[0].period.start, max(piece.period.end for piece in pieces))
+
+        cold_pairs = _framing(
+            self._meter_readings.reading_pairs_by_apartment(property_id, MeterType.COLD_WATER, period), period
+        )
+        missing = [a.number for a in apartments if a.id not in cold_pairs]
+        if missing:
+            result.warnings.append(
+                f"'{title}': Für {format_period(period)} fehlen Kaltwasser-Zählerstände (Anfang und Ende) "
+                f"für: {', '.join(missing)} - {fallback}"
+            )
+            return []
+        hot_pairs = _framing(
+            self._meter_readings.reading_pairs_by_apartment(property_id, MeterType.HOT_WATER, period), period
+        )
+        hot_missing = [a.number for a in apartments if a.id not in hot_pairs]
+        if hot_missing:
+            result.warnings.append(
+                f"'{title}': Für {format_period(period)} fehlen Warmwasser-Zählerstände (Anfang und Ende) "
+                f"für: {', '.join(hot_missing)} - es wurde kein Warmwasser-Kaltwasseranteil ausgewiesen, "
+                "die ganze Differenz zu den Wohnungszählern wurde nach Wohnfläche verteilt."
+            )
+            hot_pairs = {}
+
+        numbers = {apartment.id: apartment.number for apartment in apartments}
+        for meter_type, pairs in ((MeterType.COLD_WATER, cold_pairs), (MeterType.HOT_WATER, hot_pairs)):
+            for apartment_id, pair in pairs.items():
+                for reading in pair:
+                    if PLACEHOLDER_MARK.casefold() in reading.note.casefold():
+                        result.warnings.append(
+                            f"'{title}': Der {meter_type.label}-Zählerstand {numbers.get(apartment_id, apartment_id)} "
+                            f"vom {reading.date:%d.%m.%Y} ({reading.value}) ist ein Platzhalter - bitte durch den "
+                            "bestätigten Wert ersetzen."
+                        )
+
+        cold = {apartment_id: end.value - start.value for apartment_id, (start, end) in cold_pairs.items()}
+        hot = {apartment_id: end.value - start.value for apartment_id, (start, end) in hot_pairs.items()}
+        breakdown = water_breakdown(
+            pieces,
+            measured=sum(cold.values(), Decimal(0)),
+            hot_water=sum(hot.values(), Decimal(0)) if hot else None,
+            warnings=result.warnings,
+        )
+        in_heating_costs = self._hot_water_in_heating_costs(breakdown, heating_with_cold_water, result)
+        return water_positions(pieces, breakdown, cold, hot, hot_water_in_heating_costs=in_heating_costs)
+
+    @staticmethod
+    def _hot_water_in_heating_costs(
+        breakdown: WaterBreakdown, heating_with_cold_water: list[Cost], result: BillingResult
+    ) -> bool:
+        """``True``, wenn Heizkostenrechnungen mit Kaltwasser den ganzen Zeitraum der Wasserregel abdecken.
+
+        Dann wird der Warmwasser-Kaltwasseranteil nicht umgelegt; ein Hinweis nennt Menge
+        und Betrag. Decken sie nur einen Teil ab, bleibt
+        es bei der eigenen Position - mit Hinweis, damit nichts doppelt abgerechnet wird.
+        """
+        if breakdown.hot_water_quantity <= 0 or not heating_with_cold_water:
+            return False
+        titles = ", ".join(dict.fromkeys(f"'{cost.title}'" for cost in heating_with_cold_water))
+        amount = f"{format_quantity(breakdown.hot_water_quantity)} m³, {format_money(breakdown.hot_water_amount)}"
+        if not _covers([cost.period for cost in heating_with_cold_water], breakdown.period):
+            result.warnings.append(
+                f"{titles} enthält laut Einstellung das Kaltwasser für die Warmwasserbereitung, deckt aber "
+                f"nicht den ganzen Zeitraum {format_period(breakdown.period)} ab. Der Warmwasser-Kaltwasseranteil "
+                f"({amount}) wurde deshalb als eigene Position verteilt - bitte prüfen, dass er nicht doppelt "
+                "abgerechnet wird."
+            )
+            return False
+        result.warnings.append(
+            f"Das Kaltwasser für die Warmwasserbereitung ({amount}) ist laut {titles} in den Heizkosten "
+            "enthalten und wird bei der Wasserversorgung nicht umgelegt."
+        )
+        return True
+
+    # ------------------------------------------------------------------ #
     # Interna
     # ------------------------------------------------------------------ #
     def _consumption_for(
@@ -319,7 +480,7 @@ class BillingService:
         kennen keine Abweichungen: Dort ist die Verteilung gesetzlich
         vorgegeben bzw. steht je Mieter bereits fest.
         """
-        if cost.allocation_key in (AllocationKey.DIRECT, AllocationKey.CONSUMPTION_AREA):
+        if cost.allocation_key in (AllocationKey.DIRECT, AllocationKey.CONSUMPTION_AREA, AllocationKey.OWNER):
             return {}
         return {
             tenant_id: key
@@ -363,3 +524,32 @@ class BillingService:
                     "Direkt zugeordnete Beträge (z. B. Messdienst) wurden unverändert übernommen - "
                     "bitte prüfen, ob sie zum gewählten Zeitraum passen."
                 )
+
+
+def _framing(
+    pairs: dict[int, tuple[MeterReading, MeterReading]], period: DateRange
+) -> dict[int, tuple[MeterReading, MeterReading]]:
+    """Nur Ablesungen, die den Zeitraum wirklich einrahmen: Anfang und Ende je höchstens 14 Tage daneben.
+
+    Die gewöhnliche Verbrauchsermittlung nimmt als Endstand auch eine Ablesung lange vor dem
+    Periodenende. Für die Wasserregel muss der Zeitraum zu den Rechnungen passen - sonst fehlt der Stand.
+    """
+    return {
+        apartment_id: (start, end)
+        for apartment_id, (start, end) in pairs.items()
+        if abs((start.date - period.start).days) <= READING_TOLERANCE_DAYS
+        and abs((end.date - period.end).days) <= READING_TOLERANCE_DAYS
+    }
+
+
+def _covers(periods: list[DateRange], target: DateRange) -> bool:
+    """``True``, wenn die Zeiträume zusammen ``target`` lückenlos abdecken."""
+    covered_until = target.start
+    for period in sorted(periods, key=lambda p: p.start):
+        if period.start > covered_until:
+            break
+        if period.end >= covered_until:
+            covered_until = period.end + timedelta(days=1)
+        if covered_until > target.end:
+            return True
+    return covered_until > target.end

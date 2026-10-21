@@ -327,6 +327,8 @@ class BillingTab(BaseTab):
     def _unallocated_text(result: BillingResult) -> str:
         """Beschreibt, was nicht (oder zu viel) auf die Mieter umgelegt wird."""
         text = f"nicht umgelegt (Leerstand/Eigentümer) <b>{format_money(result.vacancy_amount)}</b>"
+        if not result.owner_amount.is_zero:
+            text += f" &nbsp;·&nbsp; nicht umlegbar <b>{format_money(result.owner_amount)}</b>"
         if not result.deviation_amount.is_zero:
             direction = "weniger" if result.deviation_amount.cents > 0 else "mehr"
             text += (

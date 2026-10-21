@@ -101,6 +101,7 @@ class SqliteCostRepository(SqliteRepository[Cost]):
             "co2_cost": entity.co2_cost.cents if entity.co2_cost is not None else None,
             "co2_emission": str(entity.co2_emission) if entity.co2_emission is not None else None,
             "co2_factor": str(entity.co2_factor) if entity.co2_factor is not None else None,
+            "includes_cold_water": int(entity.includes_cold_water),
             "splits": json.dumps(
                 [
                     {
@@ -146,6 +147,7 @@ class SqliteCostRepository(SqliteRepository[Cost]):
             co2_cost=Money(row["co2_cost"]) if row["co2_cost"] is not None else None,
             co2_emission=Decimal(row["co2_emission"]) if row["co2_emission"] else None,
             co2_factor=Decimal(row["co2_factor"]) if row["co2_factor"] else None,
+            includes_cold_water=bool(row["includes_cold_water"]),
             splits=[
                 InvoiceSplit(
                     period=DateRange(date.fromisoformat(raw["from"]), date.fromisoformat(raw["to"])),

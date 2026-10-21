@@ -15,6 +15,9 @@ class MeterType(str, Enum):
 
     HEATING = "HEATING"
     WARM_WATER = "WARM_WATER"
+    #: Zweiter Name für die Warmwasserzähler (z. B. Ablesewerte aus der ISTA-Jahresabrechnung).
+    #: Bewusst kein eigener Typ: Es sind dieselben Zähler, gespeichert als ``WARM_WATER``.
+    HOT_WATER = "WARM_WATER"
     COLD_WATER = "COLD_WATER"
     ELECTRICITY = "ELECTRICITY"
 
@@ -40,6 +43,11 @@ class AllocationKey(str, Enum):
     UNITS = "UNITS"
     #: Fertige Beträge je Mieter, z. B. aus der Abrechnung eines Messdienstes.
     DIRECT = "DIRECT"
+    #: Nur als Verteilung der Verbrauchsdifferenz einer Wasserrechnung: Grundgebühr je Wohnung,
+    #: Kaltwasser für die Warmwasserbereitung getrennt, Restmenge nach Wohnfläche.
+    WATER_RULES = "WATER_RULES"
+    #: Nicht umlegbar: Der Eigentümer trägt die Kosten allein (z. B. Miete der Rauchwarnmelder).
+    OWNER = "OWNER"
 
     @property
     def label(self) -> str:
@@ -96,6 +104,8 @@ _ALLOCATION_LABELS: dict[AllocationKey, str] = {
     AllocationKey.CONSUMPTION_AREA: "Verbrauch + Wohnfläche",
     AllocationKey.UNITS: "Wohneinheiten",
     AllocationKey.DIRECT: "Direkte Zuordnung",
+    AllocationKey.WATER_RULES: "Wasserregel",
+    AllocationKey.OWNER: "Nicht umlegbar (trägt Eigentümer)",
 }
 
 _PHOTO_LABELS: dict[PhotoCategory, str] = {

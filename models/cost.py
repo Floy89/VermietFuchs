@@ -8,7 +8,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Final, Sequence
 
 from models.cost_type import CostType
-from models.enums import AllocationKey
+from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
 from models.tariff import SplitCalculation
 from models.value_objects import DateRange, Money
@@ -22,18 +22,34 @@ DEFAULT_CONSUMPTION_SHARE: Final[int] = 70
 
 #: Schlüssel, nach denen die Differenz zwischen Gesamtverbrauch laut Rechnung
 #: und der Summe der Wohnungszähler verteilt werden kann. ``CONSUMPTION``
-#: bedeutet: anteilig wie der gemessene Verbrauch.
+#: bedeutet: anteilig wie der gemessene Verbrauch. ``WATER_RULES`` (nur Kaltwasser)
+#: rechnet die Wasserrechnungen des Abrechnungszeitraums gemeinsam ab - siehe
+#: :mod:`services.water_allocation`.
 DIFFERENCE_KEYS: Final[tuple[AllocationKey, ...]] = (
     AllocationKey.CONSUMPTION,
     AllocationKey.UNITS,
     AllocationKey.AREA,
     AllocationKey.PERSONS,
+    AllocationKey.WATER_RULES,
 )
+
+#: Bezeichnung der Wasserregel im Umlageschlüssel einer Rechnung.
+WATER_RULES_LABEL: Final[str] = "Wasserregel: Grundgebühr je Wohnung, Menge nach Zählern, Warmwasser getrennt, Rest nach Wohnfläche"
 
 #: Erlaubte Abweichung zwischen Gesamtverbrauch und Summe der Split-Verbräuche
 #: (gleicht Rundungen in der dritten Nachkommastelle aus).
 _CONSUMPTION_TOLERANCE: Final[Decimal] = Decimal("0.001")
 _THOUSANDTH: Final[Decimal] = Decimal("0.001")
+
+# CO2-Preis in € je Tonne (netto) nach dem Jahr des Verbrauchs. Werte laut Lieferantenrechnungen
+# (2024: 45 €/t, 2025: 55 €/t, 2026: 60 €/t). Für andere Jahre bleibt es bei der CO2-Angabe der Rechnung.
+CO2_PRICE_EUR_PER_T: Final[dict[int, Decimal]] = {
+    2024: Decimal("45"),
+    2025: Decimal("55"),
+    2026: Decimal("60"),
+}
+# Umsatzsteuer auf die CO2-Kosten (bei Gaslieferungen 19 %).
+CO2_VAT_RATE: Final[Decimal] = Decimal("0.19")
 
 
 @dataclass(frozen=True)
@@ -213,6 +229,10 @@ class Cost:
             dem CO2-Kostenaufteilungsgesetz). Für die Meldung an den
             Messdienst; zeitliche Ausschnitte bekommen ihren Anteil nach
             Verbrauch (ohne Verbrauch nach Betrag).
+        includes_cold_water: Nur Heiz- und Warmwasserkosten: Die Rechnung (z. B. die
+            Messdienst-Abrechnung der verbundenen Heizungs- und Warmwasserversorgung)
+            enthält bereits das Kaltwasser für die Warmwasserbereitung. Die Wasserregel
+            weist es dann nicht noch einmal als eigene Position aus.
         splits: Optionale Teilabschnitte (siehe :class:`InvoiceSplit`). Sind
             welche vorhanden, bestimmen sie allein, wie viel der Rechnung in
             welchen Zeitraum fällt.
@@ -221,6 +241,8 @@ class Cost:
             Originalrechnung. Nicht gespeichert.
         split_period: Nur bei einem Ausschnitt, der aus einem Split stammt:
             der vollständige Zeitraum dieses Splits. Nicht gespeichert.
+        calculation: Nur bei einem Ausschnitt: die Rechengrundlagen (Preise) des
+            Splits, aus dem er stammt - z. B. für den Grundpreis-Anteil. Nicht gespeichert.
     """
 
     property_id: int
@@ -241,10 +263,12 @@ class Cost:
     co2_cost: Money | None = None
     co2_emission: Decimal | None = None
     co2_factor: Decimal | None = None
+    includes_cold_water: bool = False
     id: int | None = None
     full_amount: Money | None = None
     full_period: DateRange | None = None
     split_period: DateRange | None = None
+    calculation: SplitCalculation | None = None
 
     # ------------------------------------------------------------------ #
     # Prüfung
@@ -282,6 +306,10 @@ class Cost:
                 "Verbrauchsanteil (%)",
             )
 
+        if not self.cost_type.heating_rule:
+            # Nur eine Heiz-/Warmwasserrechnung kann das Kaltwasser für das Warmwasser enthalten.
+            self.includes_cold_water = False
+
         if self.allocation_key is not AllocationKey.CONSUMPTION:
             # Die Differenzverteilung gehört nur zum reinen Verbrauchsschlüssel.
             self.difference_key = AllocationKey.CONSUMPTION
@@ -289,6 +317,8 @@ class Cost:
             raise ValidationError(
                 f"Die Verbrauchsdifferenz kann nicht nach '{self.difference_key.label}' verteilt werden."
             )
+        elif self.difference_key is AllocationKey.WATER_RULES and self.cost_type.meter_type is not MeterType.COLD_WATER:
+            raise ValidationError("Die Wasserregel gilt nur für Kostenarten mit Kaltwasserzähler.")
 
         if self.allocation_key is AllocationKey.DIRECT:
             self._validate_direct_shares()
@@ -327,6 +357,8 @@ class Cost:
         if self.allocation_key is AllocationKey.CONSUMPTION_AREA:
             area_share = 100 - self.consumption_share
             return f"{self.consumption_share} % Verbrauch, {area_share} % Wohnfläche"
+        if self.uses_water_rules:
+            return WATER_RULES_LABEL
         if self.splits_difference:
             return f"{self.allocation_key.label}, Differenz nach {self.difference_key.label}"
         return self.allocation_key.label
@@ -338,6 +370,18 @@ class Cost:
             self.allocation_key is AllocationKey.CONSUMPTION
             and self.consumption is not None
             and self.difference_key is not AllocationKey.CONSUMPTION
+        )
+
+    @property
+    def uses_water_rules(self) -> bool:
+        """``True`` für eine Wasserrechnung, die nach der Wasserregel abgerechnet wird.
+
+        Voraussetzung: Verbrauchsschlüssel, Kaltwasserzähler und Gesamtverbrauch laut Rechnung.
+        """
+        return (
+            self.splits_difference
+            and self.difference_key is AllocationKey.WATER_RULES
+            and self.cost_type.meter_type is MeterType.COLD_WATER
         )
 
     @property
@@ -390,7 +434,8 @@ class Cost:
                 return []
             if overlap == self.period:
                 return [self]
-            return [self._cut(self.period, overlap, self.amount, self.consumption, split_period=None)]
+            calculation = splits[0].calculation if covers_everything else None
+            return [self._cut(self.period, overlap, self.amount, self.consumption, None, calculation)]
 
         # CO2 je Split nur verwenden, wenn *alle* Splits Angaben haben - sonst passt die Summe nicht.
         own_co2_cost = all(split.co2_cost is not None for split in splits)
@@ -399,7 +444,7 @@ class Cost:
         for split in splits:
             overlap = split.period.intersection(billing_period)
             if overlap is not None:
-                piece = self._cut(split.period, overlap, split.amount, split.consumption, split.period)
+                piece = self._cut(split.period, overlap, split.amount, split.consumption, split.period, split.calculation)
                 factor = Decimal(overlap.days) / Decimal(split.period.days)
                 if own_co2_cost and split.co2_cost is not None:
                     piece = replace(piece, co2_cost=_scale(split.co2_cost, factor))
@@ -468,6 +513,7 @@ class Cost:
         source_amount: Money,
         source_consumption: Decimal | None,
         split_period: DateRange | None,
+        calculation: SplitCalculation | None = None,
     ) -> Cost:
         """Schneidet aus einem Abschnitt den Teil ``overlap`` heraus (taggenau).
 
@@ -476,6 +522,7 @@ class Cost:
             overlap: Der Teil davon, der in den Abrechnungszeitraum fällt.
             source_amount / source_consumption: Werte des ganzen Abschnitts.
             split_period: Zeitraum des Splits bzw. ``None`` bei einer Rechnung ohne Splits.
+            calculation: Rechengrundlagen des Splits (falls hinterlegt).
         """
         factor = Decimal(overlap.days) / Decimal(source_period.days)
         amount = _scale(source_amount, factor)
@@ -490,22 +537,34 @@ class Cost:
         co2_factor = share_factor
         if consumption is not None and self.consumption:
             co2_factor = consumption / self.consumption
+        co2_cost = _scale(self.co2_cost, co2_factor) if self.co2_cost is not None else None
+        co2_emission = (
+            (self.co2_emission * co2_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if self.co2_emission is not None
+            else None
+        )
+        # Ist der Emissionsfaktor bekannt, rechnen wir den Ausstoß des Ausschnitts aus seinen kWh nach
+        # und bewerten ihn mit dem CO2-Preis des Jahres, in dem der Verbrauch liegt. Eine Summe über
+        # Jahresgrenzen hinweg (Mischpreis) wird so nicht auf ein Kalenderjahr verteilt. Liegt die ganze
+        # Rechnung in einem Jahr, gibt es keinen Mischpreis - dann bleibt es bei ihrer eigenen Angabe.
+        spans_years = self.period.start.year != self.period.end.year
+        price = CO2_PRICE_EUR_PER_T.get(overlap.start.year) if overlap.start.year == overlap.end.year else None
+        if spans_years and consumption is not None and self.co2_factor is not None and price is not None:
+            co2_emission = (consumption * self.co2_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            co2_cost = Money.from_decimal(co2_emission / Decimal(1000) * price * (1 + CO2_VAT_RATE))
         return replace(
             self,
             amount=amount,
             consumption=consumption,
-            co2_cost=_scale(self.co2_cost, co2_factor) if self.co2_cost is not None else None,
-            co2_emission=(
-                (self.co2_emission * co2_factor).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                if self.co2_emission is not None
-                else None
-            ),
+            co2_cost=co2_cost,
+            co2_emission=co2_emission,
             period=overlap,
             direct_shares={tenant_id: _scale(share, share_factor) for tenant_id, share in self.direct_shares.items()},
             splits=[],
             full_amount=self.amount,
             full_period=self.period,
             split_period=split_period,
+            calculation=calculation,
         )
 
 

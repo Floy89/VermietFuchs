@@ -144,7 +144,7 @@ Die Screenshots lassen sich jederzeit neu erzeugen:
 | **Zählerstände** | Ablesungen mit optionalem Foto; zweite Unterseite für Mängel-Fotos. Fotos lassen sich aus dem Explorer auf die Seite oder in den Dialog ziehen. |
 | **Rechnungen** | Originalrechnungen erfassen und je Kostenart zusammenfassen – für ein Kalenderjahr oder einen eigenen Zeitraum; Unterseite **Checkliste**: Welche Rechnung fehlt noch, wann kommt sie, ab wann kann abgerechnet werden? |
 | **Abrechnung** | Ergebnis je Mietverhältnis; Abrechnungszeitraum je Wohnung anpassbar |
-| **Berichte** | Abrechnungsschreiben als PDF, Änderungsprotokoll (Audit Trail) |
+| **Berichte** | Abrechnungsschreiben als PDF (Kostenaufstellung je Kostenart, ohne Lieferanten), Änderungsprotokoll (Audit Trail) |
 
 Oben rechts im Benutzer-Menü: **Benutzer wechseln**, **Einstellungen** (Absender- und
 Bankdaten für die PDFs), **Gelernte Absender** (siehe *Belege auslesen*), **Belegerkennung**
@@ -292,8 +292,10 @@ den Messdienst, der daraus die Aufteilung zwischen Mieter und Vermieter berechne
   die Summe farbig markiert.
 - Läuft eine Rechnung über den Jahreswechsel, zählen die CO2-Werte **je Split** (Split-Dialog,
   Spalten *CO2-Kosten* und *CO2 (kg)*; beim Auslesen aus der CO2-Tabelle der Rechnung). Ohne
-  Angaben je Split wird die Summe nach Verbrauch aufgeteilt - beim Ausstoß genau, bei den Kosten
-  nur näherungsweise, weil der CO2-Preis zum Jahreswechsel steigt.
+  Angaben je Split, aber mit **Emissionsfaktor**, rechnet die Anwendung den Ausstoß eines Jahres
+  aus dessen kWh und bewertet ihn mit dem CO2-Preis dieses Jahres (2024: 45 €/t, 2025: 55 €/t,
+  2026: 60 €/t, zzgl. 19 % USt). Ohne Emissionsfaktor wird die Summe nach Verbrauch aufgeteilt -
+  beim Ausstoß genau, bei den Kosten nur näherungsweise, weil der CO2-Preis zum Jahreswechsel steigt.
 
 ### Entwicklung und Prognose
 
@@ -449,6 +451,7 @@ bestimmt der Mietvertrag. Seit 01.07.2024 nicht mehr umlagefähig sind z. B. Kab
 | Verbrauch | nach Zählerständen der Wohnungen | Kostenarten mit Zähler |
 | Verbrauch + Wohnfläche | 50–70 % Verbrauch, Rest Fläche (HeizkostenV § 7) | Heizung, Warmwasser |
 | Direkte Zuordnung | fertige Beträge je Mieter, z. B. aus der Abrechnung eines Messdienstes | alle |
+| Nicht umlegbar (trägt Eigentümer) | nichts wird umgelegt, z. B. Miete der Rauchwarnmelder; zählt in den Gesamtkosten als „nicht umlegbar“ | alle |
 
 Die Regel steht in `CostType.allowed_keys()` (`models/cost_type.py`).
 
@@ -476,11 +479,31 @@ im Rechnungsdialog fest, wer die 52 m³ trägt:
 |---|---|---|
 | *wie gemessener Verbrauch* (Standard) | Betrag × Zähler der Wohnung / Summe der Zähler - wie bisher | eine Zeile, zusätzlich „entspricht 81,081 m³ von 200 m³ Gesamtverbrauch lt. Rechnung" |
 | *nach Wohneinheiten*, *Wohnfläche* oder *Personenzahl* | Betrag × 148/200 nach Zählern, Betrag × 52/200 nach dem gewählten Schlüssel | zwei Zeilen: „Verbrauch laut Zählern" und „Differenz zum Gesamtverbrauch nach …" mit der zugerechneten Menge und dem Verbrauch gesamt |
+| *Wasserregel* (nur Kaltwasser) | siehe unten | bis zu vier Zeilen: Grundgebühr, Wohnungswasser, Restmenge und die eigene Position „Warmwasser – Kaltwasseranteil" |
 
 Das gilt nur, wenn die Einheit der Rechnung zur Zählerart passt (m³ zu m³) und der
 Gesamtverbrauch über der Summe der Wohnungszähler liegt. Ist er kleiner, erscheint ein Hinweis
 und es wird nach gemessenem Verbrauch verteilt. Beim Heizkosten-Mischschlüssel
 (Verbrauch + Wohnfläche) gibt es die Einstellung nicht.
+
+**Wasserregel.** Ein Teil der Differenz ist oft Kaltwasser, das in die Warmwasserbereitung fließt
+und an den Warmwasserzählern der Wohnungen gemessen wird (z. B. Ablesewerte der
+Messdienst-Abrechnung, Zählerart *Warmwasser*). Mit der Einstellung *Wasserregel* werden die
+Wasserrechnungen des ganzen Abrechnungszeitraums gemeinsam aufgeteilt:
+
+1. **Grundgebühr** (Grundpreis aus den Splits der Rechnung) zu gleichen Teilen je Wohnung,
+2. **Wohnungswasser** - Mengenpreis × Summe der Wohnungszähler - nach gemessenem Verbrauch,
+3. **Warmwasser – Kaltwasseranteil** - Mengenpreis × Summe der Warmwasserzähler - als eigene
+   Position nach Warmwasserverbrauch,
+4. **Restmenge** (Heizungsnachspeisung, Zapfstellen, Verluste) nach Wohnfläche; sie nimmt auch die
+   Rundungscents auf, so dass die Summe genau den Rechnungsbetrag ergibt.
+
+Zählerstände braucht es am Anfang und Ende des Zeitraums (höchstens 14 Tage daneben); fehlen
+Kaltwasserstände, bleibt es mit Hinweis bei der Verteilung je Split, fehlen Warmwasserstände,
+geht die ganze Differenz nach Wohnfläche. Zählerstände mit „Platzhalter" in der Bemerkung werden
+im Hinweis genannt. Enthält die Heizkostenrechnung des Messdiensts das Kaltwasser für das
+Warmwasser bereits (Haken **Enthält das Kaltwasser für die Warmwasserbereitung** an der
+Heizkostenrechnung), entfällt die eigene Warmwasser-Position.
 
 ### Rechnungen über den Jahreswechsel
 

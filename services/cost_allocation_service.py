@@ -212,10 +212,12 @@ class AllocationResult:
             Standard-Anteil minus tatsächlich berechneter Anteil, summiert.
             Positiv = es wird weniger umgelegt, negativ = mehr.
         warnings: Hinweise, z. B. auf fehlende Verbrauchswerte.
+        owner_amount: Betrag einer nicht umlegbaren Position (Schlüssel ``OWNER``).
     """
 
     shares_by_tenant: dict[int, list[CostShare]] = field(default_factory=lambda: defaultdict(list))
     vacancy_amount: Money = Money.zero()
+    owner_amount: Money = Money.zero()
     deviation_amount: Money = Money.zero()
     warnings: list[str] = field(default_factory=list)
 
@@ -270,6 +272,10 @@ class CostAllocationService:
         """
         result = AllocationResult()
 
+        if cost.allocation_key is AllocationKey.OWNER:
+            # Nicht umlegbar: Nichts wird verteilt, der ganze Betrag bleibt beim Eigentümer.
+            result.owner_amount = cost.amount
+            return result
         if cost.allocation_key is AllocationKey.DIRECT:
             self._allocate_direct(cost, tenants, result)
             return result
@@ -291,6 +297,35 @@ class CostAllocationService:
 
         if key_overrides:
             self._apply_key_overrides(cost, apartments, tenants, consumption, key_overrides, result)
+        return result
+
+    def allocate_components(
+        self,
+        cost: Cost,
+        components: Sequence[CostComponent],
+        apartments: Sequence[Apartment],
+        tenants: Sequence[Tenant],
+        consumption: ConsumptionMap,
+    ) -> AllocationResult:
+        """Verteilt eine Position, deren Bestandteile schon feststehen (z. B. nach der Wasserregel).
+
+        Wie :meth:`allocate`, nur ohne Zerlegung nach dem Umlageschlüssel und ohne
+        abweichende Schlüssel einzelner Mieter. Die Summe aus ``allocated_amount``
+        und ``vacancy_amount`` ist die Summe der Bestandteile.
+        """
+        result = AllocationResult()
+        if not apartments:
+            result.vacancy_amount = sum((component.amount for component in components), Money.zero())
+            result.warnings.append(
+                f"'{cost.title}': Die Immobilie hat keine Wohnungen - die Kosten wurden nicht verteilt."
+            )
+            return result
+        tenants_by_apartment: dict[int, list[Tenant]] = defaultdict(list)
+        for tenant in tenants:
+            tenants_by_apartment[tenant.apartment_id].append(tenant)
+        for component in components:
+            self._allocate_component(cost, component, apartments, tenants_by_apartment, consumption, result)
+        self._add_tenant_quantities(result)
         return result
 
     # ------------------------------------------------------------------ #
