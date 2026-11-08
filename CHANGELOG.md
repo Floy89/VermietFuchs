@@ -16,6 +16,12 @@ automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
   von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt. Rechnung“. Wohnungswasser und Warmwasser
   ergeben zusammen den Gesamtverbrauch laut Versorger.
 
+### Behoben
+
+- **Release-Build:** PyQt6 ab 6.12 enthält QtPdf nicht mehr, die automatische Erstellung der
+  Windows-Version brach deshalb bei den Tests ab (Version 1.2.1 hat darum kein Release-ZIP).
+  PyQt6 ist jetzt auf unter 6.12 begrenzt, die winrt-Pakete der Texterkennung auf 3.x.
+
 ## [1.2.1] - 2026-11-08
 
 ### Geändert

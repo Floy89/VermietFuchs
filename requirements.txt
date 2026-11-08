@@ -1,11 +1,14 @@
 # Laufzeit-Abhängigkeiten der Anwendung
-PyQt6>=6.6
+# PyQt6 unter 6.12: Ab 6.12 ist QtPdf nicht mehr enthalten (eigenes Paket PyQt6-Pdf).
+PyQt6>=6.6,<6.12
+PyQt6-Qt6<6.12
 reportlab>=4.0
-# Windows-eigene Texterkennung für Fotos und gescannte Belege (nur unter Windows)
-winrt-runtime>=3.0; sys_platform == "win32"
-winrt-Windows.Foundation>=3.0; sys_platform == "win32"
-winrt-Windows.Foundation.Collections>=3.0; sys_platform == "win32"
-winrt-Windows.Globalization>=3.0; sys_platform == "win32"
-winrt-Windows.Graphics.Imaging>=3.0; sys_platform == "win32"
-winrt-Windows.Media.Ocr>=3.0; sys_platform == "win32"
-winrt-Windows.Storage.Streams>=3.0; sys_platform == "win32"
+# Windows-eigene Texterkennung für Fotos und gescannte Belege (nur unter Windows).
+# Unter 4: winrt 4.x ist ein Major-Sprung, die Texterkennung damit ist noch nicht geprüft.
+winrt-runtime>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Globalization>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=3.0,<4; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.0,<4; sys_platform == "win32"
