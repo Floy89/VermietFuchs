@@ -500,6 +500,12 @@ Wasserrechnungen des ganzen Abrechnungszeitraums gemeinsam aufgeteilt:
 4. **Restmenge** (Heizungsnachspeisung, Zapfstellen, Verluste) nach Wohnfläche; sie nimmt auch die
    Rundungscents auf, so dass die Summe genau den Rechnungsbetrag ergibt.
 
+Maßgeblich ist immer die Rechnung des Versorgers; die Zähler sind nur der Verteilungsschlüssel.
+Messen Kalt- und Warmwasserzähler zusammen mehr als laut Rechnung verbraucht wurde (Messtoleranz,
+auf volle m³ abgelesene Zähler), werden beide im selben Verhältnis gekürzt: Der Mengenpreis geht
+im Verhältnis Wohnungswasser : Warmwasser auf die beiden Positionen, eine Restmenge entfällt. Ein
+Hinweis nennt die Mehrmenge und die Kürzung.
+
 Zählerstände braucht es am Anfang und Ende des Zeitraums (höchstens 14 Tage daneben); fehlen
 Kaltwasserstände, bleibt es mit Hinweis bei der Verteilung je Split, fehlen Warmwasserstände,
 geht die ganze Differenz nach Wohnfläche. Zählerstände mit „Platzhalter" in der Bemerkung werden

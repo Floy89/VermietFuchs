@@ -7,6 +7,16 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
+## [1.2.1] - 2026-11-08
+
+### Geändert
+
+- **Wasserregel, Zähler über der Rechnung:** Messen Kalt- und Warmwasserzähler zusammen mehr,
+  als laut Wasserrechnung verbraucht wurde (Messtoleranz, auf volle m³ abgelesene Zähler), werden
+  beide im selben Verhältnis gekürzt. Maßgeblich bleibt die Rechnung des Versorgers, die Zähler
+  sind nur der Verteilungsschlüssel. Bisher wurde allein der Warmwasser-Kaltwasseranteil gekürzt.
+  Ein Hinweis nennt Mehrmenge und Kürzung.
+
 ## [1.2.0] - 2026-10-21
 
 ### Neu
@@ -118,6 +128,7 @@ Erste veröffentlichte Version.
 - Optionale Belegerkennung über ein lokal laufendes KI-Modell (Ollama).
 - Mehrere Benutzer mit eigener Datenbank, Änderungsprotokoll, helles und dunkles Design.
 
+[1.2.1]: https://github.com/Floy89/VermietFuchs/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Floy89/VermietFuchs/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Floy89/VermietFuchs/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Floy89/VermietFuchs/releases/tag/v1.0.0

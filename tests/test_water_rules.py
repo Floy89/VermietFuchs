@@ -130,17 +130,32 @@ class TestBreakdown:
         equal = water_breakdown(_pieces_2025(), Decimal("275"), None, warnings)
         assert equal.measured_amount == equal.quantity_amount and equal.rest_amount.is_zero and not warnings
 
-        below = water_breakdown(_pieces_2025(), Decimal("300"), Decimal("70.63"), warnings)
+        below = water_breakdown(_pieces_2025(), Decimal("300"), None, warnings)
         assert below.measured_amount == below.quantity_amount and below.hot_water_amount.is_zero
         assert any("kleiner als die Summe der Wohnungszähler" in w for w in warnings)
-        assert any("kein Warmwasser-Kaltwasseranteil" in w for w in warnings)
 
-    def test_hot_water_above_the_difference_is_capped(self) -> None:
+    def test_meters_above_the_invoice_are_scaled_down_proportionally(self) -> None:
+        # 2025 nach Korrektur DG: Kaltwasser 54 + 54 + 100 = 208 m³, Warmwasser 70,63 m³ -
+        # zusammen 278,63 m³, also 3,63 m³ mehr als die 275 m³ laut Gelsenwasser.
         warnings: list[str] = []
-        result = water_breakdown(_pieces_2025(), Decimal("250"), Decimal("30"), warnings)
-        assert (result.hot_water_quantity, result.rest_quantity) == (Decimal("25"), Decimal(0))
-        assert any("messen mehr als die Differenz" in w for w in warnings)
-        assert result.base_amount + result.measured_amount + result.hot_water_amount + result.rest_amount == result.amount
+        result = water_breakdown(_pieces_2025(), Decimal("208"), Decimal("70.63"), warnings)
+
+        assert (result.measured_quantity, result.hot_water_quantity) == (Decimal("208"), Decimal("70.63"))
+        assert result.rest_quantity == 0 and result.rest_amount.is_zero
+        # 583,47 € im Verhältnis 208 : 70,63 - jeder m³ laut Zähler kostet 583,47 / 278,63 = 2,0941 €.
+        assert result.measured_amount == Money.from_decimal("435.57")
+        assert result.hot_water_amount == Money.from_decimal("147.90")
+        assert result.base_amount + result.measured_amount + result.hot_water_amount == result.amount
+        assert any("anteilig auf 98,7 % gekürzt" in w for w in warnings)
+        assert not any("kleiner als die Summe" in w for w in warnings)
+
+    def test_scaling_also_when_the_invoice_is_below_the_cold_meters(self) -> None:
+        warnings: list[str] = []
+        result = water_breakdown(_pieces_2025(), Decimal("300"), Decimal("70.63"), warnings)
+        assert result.rest_amount.is_zero and not result.hot_water_amount.is_zero
+        assert result.base_amount + result.measured_amount + result.hot_water_amount == result.amount
+        assert any("anteilig" in w for w in warnings)
+        assert any("kleiner als die Summe der Kaltwasserzähler" in w for w in warnings)
 
     def test_without_base_price_a_warning_is_given(self) -> None:
         warnings: list[str] = []
