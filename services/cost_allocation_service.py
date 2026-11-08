@@ -124,6 +124,8 @@ class CostComponent:
         quantity_label: Herkunft von ``quantity_total``, wenn sie von den Gewichten
             abweicht (z. B. "lt. Rechnung" bei auf die Rechnung gekürzten Zählern).
             Dann zeigt die Abrechnung Zählerwert und Menge nebeneinander.
+        explanation: Ein erläuternder Satz zur Verteilung, den die Abrechnung unter der
+            Rechenformel zeigt (z. B. wie Kalt- und Warmwasser aufgeteilt wurden).
     """
 
     amount: Money
@@ -132,6 +134,7 @@ class CostComponent:
     quantity_unit: str = ""
     is_difference: bool = False
     quantity_label: str = ""
+    explanation: str = ""
 
 
 #: Funktion, die eine Kostenposition in ihre Bestandteile zerlegt.
@@ -593,6 +596,7 @@ class CostAllocationService:
                         quantity_unit=component.quantity_unit,
                         is_difference=component.is_difference,
                         quantity_label=component.quantity_label,
+                        explanation=component.explanation,
                     )
                 )
 

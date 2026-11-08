@@ -12,7 +12,7 @@ from models.enums import AllocationKey
 from models.property import Property
 from models.tenant import Tenant
 from models.value_objects import DateRange, Money
-from services.pdf_export_service import category_lines
+from services.pdf_export_service import _basis_markup, category_lines
 
 YEAR = DateRange.for_year(2025)
 
@@ -57,3 +57,14 @@ class TestCategoryLines:
         lines = category_lines(statement.shares)
         assert [line.title for line in lines].count("Beleuchtung (Allgemeinstrom)") == 2
         assert sum((line.amount for line in lines), Money.zero()) == statement.total_costs
+
+
+class TestBasisMarkup:
+    def test_explanation_is_small_and_grey_below_the_formula(self) -> None:
+        markup = _basis_markup("54 m³ von 208 m³\nKaltwasser 208 m³ & Warmwasser")
+        formula, note = markup.split("<br/>", 1)
+        assert formula == "54 m³ von 208 m³"
+        assert note == '<font size="7.5" color="#5f6b7a">Kaltwasser 208 m³ &amp; Warmwasser</font>'
+
+    def test_without_explanation_only_the_formula(self) -> None:
+        assert _basis_markup("158 m² von 368 m²") == "158 m² von 368 m²"

@@ -14,7 +14,7 @@ from typing import Final
 APP_NAME: Final[str] = "VermietFuchs"
 #: Kurzbeschreibung unter dem Namen (Über-Dialog).
 APP_TAGLINE: Final[str] = "Clever vermieten. Einfach verwalten."
-APP_VERSION: Final[str] = "1.3.0"
+APP_VERSION: Final[str] = "1.4.0"
 
 #: Dateiname der SQLite-Datenbank in jedem Benutzerordner.
 DATABASE_FILE_NAME: Final[str] = "benutzer.db"

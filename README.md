@@ -484,7 +484,7 @@ im Rechnungsdialog fest, wer die 52 m³ trägt:
 |---|---|---|
 | *wie gemessener Verbrauch* (Standard) | Betrag × Zähler der Wohnung / Summe der Zähler - wie bisher | eine Zeile, zusätzlich „entspricht 81,081 m³ von 200 m³ Gesamtverbrauch lt. Rechnung" |
 | *nach Wohneinheiten*, *Wohnfläche* oder *Personenzahl* | Betrag × 148/200 nach Zählern, Betrag × 52/200 nach dem gewählten Schlüssel | zwei Zeilen: „Verbrauch laut Zählern" und „Differenz zum Gesamtverbrauch nach …" mit der zugerechneten Menge und dem Verbrauch gesamt |
-| *Wasserregel* bzw. *Wasserregel, Grundgebühr je Wohnung* (nur Kaltwasser) | siehe unten | bis zu vier Zeilen: Grundgebühr, Wohnungswasser, Restmenge und die eigene Position „Warmwasser – Kaltwasseranteil" |
+| *Wasserregel* in vier Varianten (Grundgebühr nach Wohnfläche oder je Wohnung, Rest nach Wohnfläche oder nach Zählern; nur Kaltwasser) | siehe unten | bis zu vier Zeilen: Grundgebühr, Wohnungswasser, Restmenge und die eigene Position „Warmwasser – Kaltwasseranteil" |
 
 Das gilt nur, wenn die Einheit der Rechnung zur Zählerart passt (m³ zu m³) und der
 Gesamtverbrauch über der Summe der Wohnungszähler liegt. Ist er kleiner, erscheint ein Hinweis
@@ -512,6 +512,19 @@ im Verhältnis Wohnungswasser : Warmwasser auf die beiden Positionen, eine Restm
 Hinweis nennt die Mehrmenge und die Kürzung. Die Abrechnung zeigt dann Zählerwert und Menge laut
 Rechnung nebeneinander („Zähler 100 m³ von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt.
 Rechnung“); beide Positionen ergeben zusammen den Gesamtverbrauch laut Versorger.
+
+**Rest nach Zählern.** Ist im Mietvertrag vereinbart, dass auch die Restmenge nach Verbrauch geht,
+gibt es beide Varianten zusätzlich mit „ganze Menge im Verhältnis Kalt- : Warmwasserzähler“
+(*Wasserregel, Rest nach Zählern* bzw. *Wasserregel, Grundgebühr je Wohnung, Rest nach Zählern*).
+Dann wird die ganze Menge laut Rechnung immer im Verhältnis Kaltwasser : Warmwasser laut Zählern
+aufgeteilt - wie beim Kürzen, nur auch nach oben. Eine Restmenge nach Wohnfläche gibt es nicht;
+fehlen Warmwasserstände, geht alles nach den Kaltwasserzählern.
+
+In Abrechnung und PDF steht unter den Zeilen Wohnungswasser und Warmwasser ein Satz dazu, wie Kalt-
+und Warmwasser aufgeteilt wurden - z. B. „Zähler zusammen 278,63 m³ = Kaltwasser 208 m³ (74,65 %)
++ Warmwasser 70,63 m³ (25,35 %). In diesem Verhältnis werden die 275 m³ lt. Rechnung aufgeteilt.“
+oder, mit Restmenge, „Gesamtverbrauch 300 m³ lt. Rechnung = Kaltwasser 208 m³ + Warmwasser
+70,63 m³ laut Zählern + Restmenge 21,37 m³ nach Wohnfläche.“
 
 Zählerstände braucht es am Anfang und Ende des Zeitraums (höchstens 14 Tage daneben); fehlen
 Kaltwasserstände, bleibt es mit Hinweis bei der Verteilung je Split, fehlen Warmwasserstände,

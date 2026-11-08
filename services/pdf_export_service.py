@@ -257,7 +257,7 @@ class PdfExportService:
                 [
                     Paragraph(escape(line.title), self._cell),
                     Paragraph(format_money(line.total), self._cell_right),
-                    Paragraph(escape(line.basis), self._cell),
+                    Paragraph(_basis_markup(line.basis), self._cell),
                     Paragraph(format_money(line.amount), self._cell_right),
                 ]
             )
@@ -378,6 +378,16 @@ class PdfExportService:
         canvas.drawString(22 * mm, 10 * mm, f"Erstellt mit {config.APP_NAME} {config.APP_VERSION}")
         canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Seite {document.page}")
         canvas.restoreState()
+
+
+def _basis_markup(basis: str) -> str:
+    """Rechenformel in normaler Schrift, eine Erläuterung (ab der zweiten Zeile) klein und grau darunter."""
+    formula, _, explanation = basis.partition("\n")
+    markup = escape(formula)
+    if explanation:
+        note = escape(explanation).replace("\n", "<br/>")
+        markup += f'<br/><font size="7.5" color="{_MUTED.hexval().replace("0x", "#")}">{note}</font>'
+    return markup
 
 
 @dataclass(frozen=True)

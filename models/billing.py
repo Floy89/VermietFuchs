@@ -84,6 +84,8 @@ class CostShare:
         quantity_label: Herkunft der Menge, wenn sie nicht den Gewichten entspricht
             (z. B. "lt. Rechnung": Zähler sind der Schlüssel, die Menge kommt aus der
             Rechnung). Dann werden Zählerwert und Menge nebeneinander gezeigt.
+        explanation: Erläuternder Satz unter der Rechenformel (eigene Zeile), z. B. wie
+            die Wasserregel Kalt- und Warmwasser aufgeteilt hat.
     """
 
     cost: Cost
@@ -103,6 +105,7 @@ class CostShare:
     is_difference: bool = False
     tenant_quantity: Decimal | None = None
     quantity_label: str = ""
+    explanation: str = ""
 
 
 @dataclass

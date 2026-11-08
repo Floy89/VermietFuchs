@@ -20,6 +20,8 @@ Verbrauchsdifferenz nach der *Wasserregel* verteilt wird, gilt deshalb:
    Messen Kalt- und Warmwasserzähler zusammen mehr als G (M + H > G, z. B. durch
    Messtoleranz oder auf volle m³ abgelesene Zähler), werden beide anteilig gekürzt:
    Der ganze Mengenpreis wird im Verhältnis M : H verteilt, eine Restmenge gibt es nicht.
+   Bei den Varianten "Rest nach Zählern" (im Mietvertrag vereinbart) gilt das immer -
+   auch eine Restmenge geht dann im Verhältnis M : H nach den Zählern statt nach Wohnfläche.
    Ohne Warmwasserzähler und G nicht größer als M wird der ganze Mengenpreis nach
    gemessenem Verbrauch verteilt.
 
@@ -38,7 +40,7 @@ from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Final, Mapping, Sequence
 
-from models.cost import Cost
+from models.cost import WATER_RULES_UNIT_BASE_KEYS, Cost
 from models.cost_type import CostType
 from models.enums import AllocationKey, MeterType
 from models.value_objects import DateRange, Money
@@ -105,7 +107,11 @@ class WaterBreakdown:
 
     @property
     def is_scaled(self) -> bool:
-        """``True``, wenn die Zähler mehr messen als die Rechnung und anteilig gekürzt wurde."""
+        """``True``, wenn die Menge laut Rechnung im Verhältnis der Zähler aufgeteilt wurde (ohne Restmenge).
+
+        Das ist der Fall, wenn die Zähler mehr messen als die Rechnung (anteilig gekürzt) oder
+        bei "Rest nach Zählern" (anteilig hochgerechnet).
+        """
         return self.billed_measured_quantity is not None
 
     @property
@@ -158,6 +164,7 @@ def water_breakdown(
     measured: Decimal,
     hot_water: Decimal | None,
     warnings: list[str],
+    rest_by_meters: bool = False,
 ) -> WaterBreakdown:
     """Teilt die Rechnungsausschnitte nach der Wasserregel auf.
 
@@ -166,6 +173,9 @@ def water_breakdown(
         measured: Summe der Wohnungszähler (Kaltwasser) im selben Zeitraum.
         hot_water: Summe der Warmwasserzähler oder ``None``, wenn sie nicht vollständig ist.
         warnings: Hier landen Hinweise (fehlender Grundpreis, unplausible Mengen).
+        rest_by_meters: ``True`` bei "Rest nach Zählern": Eine Restmenge über den Zählern
+            wird nicht nach Wohnfläche verteilt, sondern die ganze Menge im Verhältnis
+            Kaltwasser : Warmwasser (ohne Warmwasserzähler: nach den Kaltwasserzählern).
     """
     title = pieces[0].cost_type.label
     period = DateRange(min(p.period.start for p in pieces), max(p.period.end for p in pieces))
@@ -190,6 +200,9 @@ def water_breakdown(
 
     if hot_water and measured + hot_water > total:
         return _scaled_breakdown(period, amount, base, total, measured, hot_water, title, warnings)
+    metered = measured + (hot_water or Decimal(0))
+    if rest_by_meters and metered > 0 and total > metered:
+        return _scaled_breakdown(period, amount, base, total, measured, hot_water or Decimal(0), title, warnings)
 
     hot_quantity = Decimal(0)
     if total <= measured:
@@ -254,11 +267,12 @@ def water_positions(
         calculation=None,
     )
     unit = breakdown.unit
+    note = split_note(breakdown)
     components: list[CostComponent] = []
     if not breakdown.base_amount.is_zero:
         base_strategy = (
             UnitWeight(label=BASE_LABEL_UNITS)
-            if pieces[0].difference_key is AllocationKey.WATER_RULES_UNITS
+            if pieces[0].difference_key in WATER_RULES_UNIT_BASE_KEYS
             else AreaWeight(label=BASE_LABEL_AREA)
         )
         components.append(CostComponent(breakdown.base_amount, base_strategy))
@@ -270,6 +284,7 @@ def water_positions(
             quantity_total=breakdown.billed_measured_quantity,
             quantity_unit=unit,
             quantity_label=BILLED_QUANTITY_LABEL,
+            explanation=note,
         )
     else:
         measured_component = CostComponent(
@@ -277,6 +292,7 @@ def water_positions(
             ConsumptionWeight(label=MEASURED_LABEL, unit=unit),
             quantity_total=breakdown.measured_quantity,
             quantity_unit=unit,
+            explanation=note,
         )
     components.append(measured_component)
     if breakdown.rest_quantity > 0 or not breakdown.rest_amount.is_zero:
@@ -306,11 +322,45 @@ def water_positions(
                 quantity_total=breakdown.billed_hot_water_quantity,
                 quantity_unit=unit,
                 quantity_label=BILLED_QUANTITY_LABEL,
+                explanation=note,
             )
         else:
-            component = CostComponent(breakdown.hot_water_amount, ConsumptionWeight(label=HOT_WATER_LABEL, unit=unit))
+            component = CostComponent(
+                breakdown.hot_water_amount, ConsumptionWeight(label=HOT_WATER_LABEL, unit=unit), explanation=note
+            )
         positions.append(WaterPosition(hot, [component], hot_water))
     return positions
+
+
+def split_note(breakdown: WaterBreakdown) -> str:
+    """Ein Satz für die Zeilen Wohnungswasser und Warmwasser: wie Kalt und Warm aufgeteilt wurden.
+
+    Ohne Warmwasser gibt es nichts aufzuteilen (leerer Text). Beispiele::
+
+        Zähler zusammen 278,63 m³ = Kaltwasser 208 m³ (74,65 %) + Warmwasser 70,63 m³ (25,35 %).
+        In diesem Verhältnis werden die 275 m³ lt. Rechnung aufgeteilt.
+
+        Gesamtverbrauch 300 m³ lt. Rechnung = Kaltwasser 208 m³ + Warmwasser 70,63 m³ laut Zählern
+        + Restmenge 21,37 m³ nach Wohnfläche.
+    """
+    cold, hot, total = breakdown.measured_quantity, breakdown.hot_water_quantity, breakdown.total_quantity
+    if hot <= 0:
+        return ""
+    if breakdown.is_scaled:
+        metered = cold + hot
+        cold_percent = (cold / metered * 100).quantize(_CENT, rounding=ROUND_HALF_UP)
+        return (
+            f"Zähler zusammen {_quantity(metered)} m³ = Kaltwasser {_quantity(cold)} m³ ({_quantity(cold_percent)} %) "
+            f"+ Warmwasser {_quantity(hot)} m³ ({_quantity(100 - cold_percent)} %). In diesem Verhältnis werden "
+            f"die {_quantity(total)} m³ lt. Rechnung aufgeteilt."
+        )
+    text = (
+        f"Gesamtverbrauch {_quantity(total)} m³ lt. Rechnung = Kaltwasser {_quantity(cold)} m³ "
+        f"+ Warmwasser {_quantity(hot)} m³ laut Zählern"
+    )
+    if breakdown.rest_quantity > 0:
+        text += f" + Restmenge {_quantity(breakdown.rest_quantity)} m³ nach Wohnfläche"
+    return text + "."
 
 
 def _scaled_breakdown(
@@ -323,24 +373,26 @@ def _scaled_breakdown(
     title: str,
     warnings: list[str],
 ) -> WaterBreakdown:
-    """Kalt- und Warmwasserzähler messen zusammen mehr als die Rechnungen: anteilig kürzen.
+    """Die ganze Menge laut Rechnung im Verhältnis der Zähler aufteilen, ohne Restmenge.
 
     Der ganze Mengenpreis wird im Verhältnis der gemessenen Mengen auf Wohnungswasser
     und Warmwasser verteilt - jede Wohnung zahlt ihren Anteil an allen Zählern, alle
-    Zähler werden im selben Verhältnis (Rechnung / Zähler) gekürzt. Eine Restmenge
-    nach Wohnfläche gibt es nicht.
+    Zähler werden im selben Verhältnis (Rechnung / Zähler) gekürzt oder - bei "Rest nach
+    Zählern" - hochgerechnet. Eine Restmenge nach Wohnfläche gibt es nicht. Nur das
+    Kürzen ist eine Auffälligkeit und bekommt einen Hinweis.
     """
     metered = measured + hot_water
     work = amount - base
     measured_amount = _share(work, measured, metered)
     hot_amount = work - measured_amount  # nimmt die Rundungscents auf
-    factor = (total / metered * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    warnings.append(
-        f"'{title}': Die Wohnungszähler messen zusammen {_quantity(metered)} m³ (Kaltwasser "
-        f"{_quantity(measured)} m³, Warmwasser {_quantity(hot_water)} m³), {_quantity(metered - total)} m³ mehr "
-        f"als laut Rechnung ({_quantity(total)} m³). Kalt- und Warmwasser wurden anteilig auf "
-        f"{_quantity(factor)} % gekürzt, eine Restmenge nach Wohnfläche gibt es nicht."
-    )
+    if metered > total:
+        factor = (total / metered * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        warnings.append(
+            f"'{title}': Die Wohnungszähler messen zusammen {_quantity(metered)} m³ (Kaltwasser "
+            f"{_quantity(measured)} m³, Warmwasser {_quantity(hot_water)} m³), {_quantity(metered - total)} m³ mehr "
+            f"als laut Rechnung ({_quantity(total)} m³). Kalt- und Warmwasser wurden anteilig auf "
+            f"{_quantity(factor)} % gekürzt, eine Restmenge nach Wohnfläche gibt es nicht."
+        )
     if total < measured:
         warnings.append(
             f"'{title}': Der Gesamtverbrauch laut Rechnung ({_quantity(total)} m³) ist sogar kleiner als die Summe "

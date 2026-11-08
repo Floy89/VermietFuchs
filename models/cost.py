@@ -32,11 +32,27 @@ DIFFERENCE_KEYS: Final[tuple[AllocationKey, ...]] = (
     AllocationKey.PERSONS,
     AllocationKey.WATER_RULES,
     AllocationKey.WATER_RULES_UNITS,
+    AllocationKey.WATER_RULES_METERED,
+    AllocationKey.WATER_RULES_UNITS_METERED,
 )
 
-#: Varianten der Wasserregel (nur Kaltwasser). Sie unterscheiden sich nur darin, wie die Grundgebühr
-#: verteilt wird: nach Wohnfläche (gesetzlicher Standard, § 556a Abs. 1 BGB) oder je Wohnung.
-WATER_RULES_KEYS: Final[tuple[AllocationKey, ...]] = (AllocationKey.WATER_RULES, AllocationKey.WATER_RULES_UNITS)
+#: Varianten der Wasserregel (nur Kaltwasser). Sie unterscheiden sich darin, wie die Grundgebühr
+#: verteilt wird - nach Wohnfläche (gesetzlicher Standard, § 556a Abs. 1 BGB) oder je Wohnung - und
+#: wie eine Restmenge über den Zählern: nach Wohnfläche (Standard) oder mit nach Zählern.
+WATER_RULES_KEYS: Final[tuple[AllocationKey, ...]] = (
+    AllocationKey.WATER_RULES,
+    AllocationKey.WATER_RULES_UNITS,
+    AllocationKey.WATER_RULES_METERED,
+    AllocationKey.WATER_RULES_UNITS_METERED,
+)
+#: Wasserregel mit Grundgebühr zu gleichen Teilen je Wohnung.
+WATER_RULES_UNIT_BASE_KEYS: Final[frozenset[AllocationKey]] = frozenset(
+    {AllocationKey.WATER_RULES_UNITS, AllocationKey.WATER_RULES_UNITS_METERED}
+)
+#: Wasserregel, bei der auch die Restmenge nach den Zählern geht (Verhältnis Kaltwasser : Warmwasser).
+WATER_RULES_METERED_KEYS: Final[frozenset[AllocationKey]] = frozenset(
+    {AllocationKey.WATER_RULES_METERED, AllocationKey.WATER_RULES_UNITS_METERED}
+)
 
 #: Bezeichnung der Wasserregel im Umlageschlüssel einer Rechnung.
 WATER_RULES_LABELS: Final[dict[AllocationKey, str]] = {
@@ -45,6 +61,12 @@ WATER_RULES_LABELS: Final[dict[AllocationKey, str]] = {
     ),
     AllocationKey.WATER_RULES_UNITS: (
         "Wasserregel: Grundgebühr je Wohnung, Menge nach Zählern, Warmwasser getrennt, Rest nach Wohnfläche"
+    ),
+    AllocationKey.WATER_RULES_METERED: (
+        "Wasserregel: Grundgebühr nach Wohnfläche, ganze Menge im Verhältnis Kalt- : Warmwasserzähler"
+    ),
+    AllocationKey.WATER_RULES_UNITS_METERED: (
+        "Wasserregel: Grundgebühr je Wohnung, ganze Menge im Verhältnis Kalt- : Warmwasserzähler"
     ),
 }
 

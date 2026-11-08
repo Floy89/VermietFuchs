@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from models.apartment import Apartment
 from models.billing import BillingPeriodOverride, BillingResult, TenantStatement
-from models.cost import WATER_RULES_KEYS, Cost
+from models.cost import WATER_RULES_KEYS, WATER_RULES_METERED_KEYS, Cost
 from models.enums import AllocationKey, MeterType
 from models.exceptions import ValidationError
 from models.meter_reading import READING_TOLERANCE_DAYS, MeterReading
@@ -388,11 +388,13 @@ class BillingService:
             self._meter_readings.reading_pairs_by_apartment(property_id, MeterType.HOT_WATER, period), period
         )
         hot_missing = [a.number for a in apartments if a.id not in hot_pairs]
+        rest_by_meters = pieces[0].difference_key in WATER_RULES_METERED_KEYS
         if hot_missing:
+            rest = "nach den Kaltwasserzählern" if rest_by_meters else "nach Wohnfläche"
             result.warnings.append(
                 f"'{title}': Für {format_period(period)} fehlen Warmwasser-Zählerstände (Anfang und Ende) "
                 f"für: {', '.join(hot_missing)} - es wurde kein Warmwasser-Kaltwasseranteil ausgewiesen, "
-                "die ganze Differenz zu den Wohnungszählern wurde nach Wohnfläche verteilt."
+                f"die ganze Differenz zu den Wohnungszählern wurde {rest} verteilt."
             )
             hot_pairs = {}
 
@@ -414,6 +416,7 @@ class BillingService:
             measured=sum(cold.values(), Decimal(0)),
             hot_water=sum(hot.values(), Decimal(0)) if hot else None,
             warnings=result.warnings,
+            rest_by_meters=rest_by_meters,
         )
         in_heating_costs = self._hot_water_in_heating_costs(breakdown, heating_with_cold_water, result)
         return water_positions(pieces, breakdown, cold, hot, hot_water_in_heating_costs=in_heating_costs)

@@ -7,6 +7,24 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
+## [1.4.0] - 2026-11-08
+
+### Neu
+
+- **Wasserregel, Rest nach Zählern:** Zwei weitere Varianten im Rechnungsdialog unter
+  „Verbrauchsdifferenz“ („… ganze Menge im Verhältnis Kalt- : Warmwasserzähler“, mit Grundgebühr
+  nach Wohnfläche oder je Wohnung). Liegt die Rechnung über den Zählern, geht die Restmenge dann
+  nicht nach Wohnfläche, sondern die ganze Menge laut Rechnung im Verhältnis Kaltwasser : Warmwasser
+  nach den Zählern. Gedacht für Mietverträge, die eine Umlage nach Verbrauch vereinbaren; die
+  bisherigen Varianten bleiben unverändert.
+
+### Geändert
+
+- **Wasserregel, Ausweis je Zeile:** Unter Wohnungswasser und Warmwasser steht in Abrechnung und PDF
+  ein Satz dazu, wie Kalt- und Warmwasser aufgeteilt wurden (z. B. „Zähler zusammen 278,63 m³ =
+  Kaltwasser 208 m³ (74,65 %) + Warmwasser 70,63 m³ (25,35 %). In diesem Verhältnis werden die
+  275 m³ lt. Rechnung aufgeteilt.“). Im PDF klein und grau unter der Rechenformel.
+
 ## [1.3.0] - 2026-11-08
 
 ### Neu
@@ -152,6 +170,7 @@ Erste veröffentlichte Version.
 - Optionale Belegerkennung über ein lokal laufendes KI-Modell (Ollama).
 - Mehrere Benutzer mit eigener Datenbank, Änderungsprotokoll, helles und dunkles Design.
 
+[1.4.0]: https://github.com/Floy89/VermietFuchs/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Floy89/VermietFuchs/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Floy89/VermietFuchs/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Floy89/VermietFuchs/compare/v1.2.0...v1.2.1

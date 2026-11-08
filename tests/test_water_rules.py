@@ -289,8 +289,13 @@ class TestBilling:
 
         dg = next(s for s in result.statements if s.apartment.number == "DG")
         lines = {share.component: format_share_basis(share) for share in dg.shares if share.cost.cost_type.meter_type}
-        assert lines[MEASURED_LABEL] == "Zähler 100 m³ von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt. Rechnung"
-        assert lines[HOT_WATER_LABEL] == "Zähler 30,13 m³ von 70,63 m³ · entspricht 29,738 m³ von 69,71 m³ lt. Rechnung"
+        # Je Zeile ein Satz dazu, wie Kalt- und Warmwasser aufgeteilt wurden.
+        note = ("\nZähler zusammen 278,63 m³ = Kaltwasser 208 m³ (74,65 %) + Warmwasser 70,63 m³ (25,35 %). "
+                "In diesem Verhältnis werden die 275 m³ lt. Rechnung aufgeteilt.")
+        assert lines[MEASURED_LABEL] == (
+            "Zähler 100 m³ von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt. Rechnung" + note)
+        assert lines[HOT_WATER_LABEL] == (
+            "Zähler 30,13 m³ von 70,63 m³ · entspricht 29,738 m³ von 69,71 m³ lt. Rechnung" + note)
         assert REST_LABEL not in lines
 
         billed = sum(
@@ -299,13 +304,17 @@ class TestBilling:
         )
         assert billed.quantize(Decimal("0.001")) == Decimal("275.000")
 
-    def test_without_scaling_the_basis_text_is_unchanged(self, context: AppContext) -> None:
+    def test_without_scaling_the_lines_name_meters_and_rest(self, context: AppContext) -> None:
         house_id, _ = _house(context)
         result = context.billing.create_billing(house_id, YEAR)
         assert not any(share.quantity_label for s in result.statements for share in s.shares)
         dg = next(s for s in result.statements if s.apartment.number == "DG")
-        measured = next(share for share in dg.shares if share.component == MEASURED_LABEL)
-        assert format_share_basis(measured) == "40 m³ von 148 m³"
+        note = ("\nGesamtverbrauch 275 m³ lt. Rechnung = Kaltwasser 148 m³ + Warmwasser 70,63 m³ laut Zählern "
+                "+ Restmenge 56,37 m³ nach Wohnfläche.")
+        lines = {share.component: format_share_basis(share) for share in dg.shares if share.cost.cost_type.meter_type}
+        assert lines[MEASURED_LABEL] == "40 m³ von 148 m³" + note
+        assert lines[HOT_WATER_LABEL] == "30,13 m³ von 70,63 m³" + note
+        assert "\n" not in lines[REST_LABEL] and "\n" not in lines[BASE_LABEL]
 
     def test_invoice_total_is_fully_distributed(self, context: AppContext) -> None:
         house_id, _ = _house(context)
@@ -380,9 +389,82 @@ class TestBilling:
         combo = dialog._difference_combo
         keys = [combo.itemData(i) for i in range(combo.count())]
         assert AllocationKey.WATER_RULES in keys and AllocationKey.WATER_RULES_UNITS in keys
+        assert AllocationKey.WATER_RULES_METERED in keys and AllocationKey.WATER_RULES_UNITS_METERED in keys
+        assert combo.itemText(keys.index(AllocationKey.WATER_RULES_METERED)) == (
+            "Wasserregel: Grundgebühr nach Wohnfläche, ganze Menge im Verhältnis Kalt- : Warmwasserzähler")
         assert combo.currentData() is AllocationKey.WATER_RULES_UNITS
         assert combo.itemText(keys.index(AllocationKey.WATER_RULES)).startswith("Wasserregel: Grundgebühr nach Wohnfläche")
         assert combo.itemText(keys.index(AllocationKey.WATER_RULES_UNITS)).startswith("Wasserregel: Grundgebühr je Wohnung")
+
+
+# ---------------------------------------------------------------------- #
+# Variante "Rest nach Zählern" (im Mietvertrag vereinbart)
+# ---------------------------------------------------------------------- #
+class TestRestByMeters:
+    def test_rest_goes_by_the_meter_ratio(self) -> None:
+        # 2025 vor Korrektur DG: Zähler 148 + 70,63 = 218,63 m³, also 56,37 m³ weniger als laut Rechnung.
+        warnings: list[str] = []
+        result = water_breakdown(_pieces_2025(), Decimal("148"), Decimal("70.63"), warnings, rest_by_meters=True)
+
+        assert not warnings  # vereinbarte Verteilung, keine Auffälligkeit
+        assert result.rest_quantity == 0 and result.rest_amount.is_zero and result.is_scaled
+        # 583,47 € im Verhältnis 148 : 70,63.
+        assert (result.measured_amount, result.hot_water_amount) == (
+            Money.from_decimal("394.98"), Money.from_decimal("188.49"))
+        assert (result.billed_measured_quantity, result.billed_hot_water_quantity) == (
+            Decimal("186.159"), Decimal("88.841"))
+        assert result.base_amount + result.measured_amount + result.hot_water_amount == result.amount
+
+    def test_without_hot_water_all_by_cold_meters(self) -> None:
+        result = water_breakdown(_pieces_2025(), Decimal("148"), None, [], rest_by_meters=True)
+        assert result.measured_amount == result.quantity_amount and result.hot_water_amount.is_zero
+        assert result.billed_measured_quantity == Decimal("275")
+
+    def test_meters_above_the_invoice_like_the_standard(self) -> None:
+        warnings: list[str] = []
+        metered = water_breakdown(_pieces_2025(), Decimal("208"), Decimal("70.63"), warnings, rest_by_meters=True)
+        standard = water_breakdown(_pieces_2025(), Decimal("208"), Decimal("70.63"), [])
+        assert metered == standard
+        assert any("anteilig auf 98,7 % gekürzt" in w for w in warnings)
+
+    @pytest.mark.parametrize(
+        ("key", "base_label"),
+        [(AllocationKey.WATER_RULES_METERED, BASE_LABEL_AREA), (AllocationKey.WATER_RULES_UNITS_METERED, BASE_LABEL)],
+    )
+    def test_billing(self, context: AppContext, key: AllocationKey, base_label: str) -> None:
+        house_id, _ = _house(context, key=key)
+        result = context.billing.create_billing(house_id, YEAR)
+
+        water, hot = result.costs
+        assert (water.consumption, hot.consumption) == (Decimal("186.159"), Decimal("88.841"))
+        parts = _parts(result)
+        assert all(REST_LABEL not in apartment for apartment in parts.values())
+        assert all(base_label in apartment for apartment in parts.values())
+        hot_total = sum((apartment["Warmwasser"] for apartment in parts.values()), Money.zero())
+        assert hot_total == Money.from_decimal("188.49")
+        assert result.total_allocated == Money.from_decimal("747.18")
+
+        dg = next(s for s in result.statements if s.apartment.number == "DG")
+        measured = next(share for share in dg.shares if share.component == MEASURED_LABEL)
+        assert format_share_basis(measured) == (
+            "Zähler 40 m³ von 148 m³ · entspricht 50,313 m³ von 186,159 m³ lt. Rechnung\n"
+            "Zähler zusammen 218,63 m³ = Kaltwasser 148 m³ (67,69 %) + Warmwasser 70,63 m³ (32,31 %). "
+            "In diesem Verhältnis werden die 275 m³ lt. Rechnung aufgeteilt."
+        )
+
+    def test_missing_hot_water_readings_name_the_cold_meters(self, context: AppContext) -> None:
+        hot = {name: rows for name, rows in HOT.items() if name != "DG"}
+        house_id, _ = _house(context, hot=hot, key=AllocationKey.WATER_RULES_METERED)
+        result = context.billing.create_billing(house_id, YEAR)
+        assert any("wurde nach den Kaltwasserzählern verteilt" in w for w in result.warnings), result.warnings
+        assert all(REST_LABEL not in apartment for apartment in _parts(result).values())
+        assert result.total_allocated == Money.from_decimal("747.18")
+
+    def test_setting_is_stored(self, context: AppContext) -> None:
+        house_id, _ = _house(context, key=AllocationKey.WATER_RULES_UNITS_METERED)
+        costs = context.costs.list_costs(house_id)
+        assert all(cost.difference_key is AllocationKey.WATER_RULES_UNITS_METERED for cost in costs)
+        assert costs[0].uses_water_rules
 
 
 # ---------------------------------------------------------------------- #

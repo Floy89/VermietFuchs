@@ -105,7 +105,8 @@ def format_share_basis(share: CostShare) -> str:
     """Beschreibt die Berechnungsgrundlage eines Kostenanteils in Worten.
 
     Beispiel: ``"65 m² von 240 m² · 184 von 365 Tagen"``. Der Zeitanteil wird
-    nur genannt, wenn der Mieter nicht den gesamten Zeitraum gewohnt hat.
+    nur genannt, wenn der Mieter nicht den gesamten Zeitraum gewohnt hat. Eine
+    Erläuterung (``share.explanation``) folgt in einer eigenen Zeile.
     """
     if share.note:
         return share.note
@@ -132,4 +133,6 @@ def format_share_basis(share: CostShare) -> str:
     if share.individual_key:
         # Anteil nach abweichendem Schlüssel statt nach dem Standard der Rechnung.
         basis += " · lt. Mietvertrag"
+    if share.explanation:
+        basis += f"\n{share.explanation}"
     return basis
