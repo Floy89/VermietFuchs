@@ -81,6 +81,9 @@ class CostShare:
             zwischen Gesamtverbrauch und Wohnungszählern verteilt.
         tenant_quantity: Am Differenz-Bestandteil: der dem Mieter insgesamt
             zugerechnete Verbrauch (gemessen + Anteil an der Differenz).
+        quantity_label: Herkunft der Menge, wenn sie nicht den Gewichten entspricht
+            (z. B. "lt. Rechnung": Zähler sind der Schlüssel, die Menge kommt aus der
+            Rechnung). Dann werden Zählerwert und Menge nebeneinander gezeigt.
     """
 
     cost: Cost
@@ -99,6 +102,7 @@ class CostShare:
     quantity_unit: str = ""
     is_difference: bool = False
     tenant_quantity: Decimal | None = None
+    quantity_label: str = ""
 
 
 @dataclass

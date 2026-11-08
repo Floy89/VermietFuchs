@@ -64,6 +64,8 @@ BASE_LABEL_UNITS: Final[str] = "Grundgebühr nach Wohneinheiten"
 MEASURED_LABEL: Final[str] = "Wohnungswasser laut Zählern"
 REST_LABEL: Final[str] = "Restmenge nach Wohnfläche"
 HOT_WATER_LABEL: Final[str] = "Warmwasserverbrauch"
+#: Zusatz zur Menge, wenn die Zähler anteilig auf die Rechnung gekürzt wurden.
+BILLED_QUANTITY_LABEL: Final[str] = "lt. Rechnung"
 
 _CENT: Final[Decimal] = Decimal("0.01")
 
@@ -82,6 +84,9 @@ class WaterBreakdown:
         measured_quantity: Summe der Wohnungszähler (M).
         hot_water_quantity: Davon getrennt ausgewiesenes Warmwasser (H, laut Zählern).
         rest_quantity: Restmenge (G − M − H, nie negativ; 0 bei anteiliger Kürzung).
+        billed_measured_quantity / billed_hot_water_quantity: Nur bei anteiliger
+            Kürzung: Wohnungswasser und Warmwasser laut Rechnung (zusammen G). Die
+            Zählermengen M und H bleiben der Verteilungsschlüssel.
     """
 
     period: DateRange
@@ -95,6 +100,20 @@ class WaterBreakdown:
     hot_water_quantity: Decimal
     rest_quantity: Decimal
     unit: str = "m³"
+    billed_measured_quantity: Decimal | None = None
+    billed_hot_water_quantity: Decimal | None = None
+
+    @property
+    def is_scaled(self) -> bool:
+        """``True``, wenn die Zähler mehr messen als die Rechnung und anteilig gekürzt wurde."""
+        return self.billed_measured_quantity is not None
+
+    @property
+    def hot_water_billed(self) -> Decimal:
+        """Warmwasser-Kaltwasseranteil in m³ laut Rechnung (ohne Kürzung = laut Zählern)."""
+        if self.billed_hot_water_quantity is not None:
+            return self.billed_hot_water_quantity
+        return self.hot_water_quantity
 
     @property
     def quantity_amount(self) -> Money:
@@ -221,7 +240,7 @@ def water_positions(
         pieces[0],
         amount=water_amount,
         period=breakdown.period,
-        consumption=breakdown.total_quantity - breakdown.hot_water_quantity,
+        consumption=breakdown.total_quantity - breakdown.hot_water_billed,
         description=", ".join(descriptions),
         direct_shares={},
         splits=[],
@@ -243,14 +262,23 @@ def water_positions(
             else AreaWeight(label=BASE_LABEL_AREA)
         )
         components.append(CostComponent(breakdown.base_amount, base_strategy))
-    components.append(
-        CostComponent(
+    if breakdown.is_scaled:
+        # Zähler sind der Schlüssel, ausgewiesen wird zusätzlich die Menge laut Rechnung.
+        measured_component = CostComponent(
+            breakdown.measured_amount,
+            ConsumptionWeight(label=MEASURED_LABEL, unit=unit),
+            quantity_total=breakdown.billed_measured_quantity,
+            quantity_unit=unit,
+            quantity_label=BILLED_QUANTITY_LABEL,
+        )
+    else:
+        measured_component = CostComponent(
             breakdown.measured_amount,
             ConsumptionWeight(label=MEASURED_LABEL, unit=unit),
             quantity_total=breakdown.measured_quantity,
             quantity_unit=unit,
         )
-    )
+    components.append(measured_component)
     if breakdown.rest_quantity > 0 or not breakdown.rest_amount.is_zero:
         components.append(
             CostComponent(
@@ -268,10 +296,19 @@ def water_positions(
             water,
             cost_type=HOT_WATER_COST_TYPE,
             amount=breakdown.hot_water_amount,
-            consumption=breakdown.hot_water_quantity,
+            consumption=breakdown.hot_water_billed,
             difference_key=AllocationKey.CONSUMPTION,
         )
-        component = CostComponent(breakdown.hot_water_amount, ConsumptionWeight(label=HOT_WATER_LABEL, unit=unit))
+        if breakdown.is_scaled:
+            component = CostComponent(
+                breakdown.hot_water_amount,
+                ConsumptionWeight(label=HOT_WATER_LABEL, unit=unit),
+                quantity_total=breakdown.billed_hot_water_quantity,
+                quantity_unit=unit,
+                quantity_label=BILLED_QUANTITY_LABEL,
+            )
+        else:
+            component = CostComponent(breakdown.hot_water_amount, ConsumptionWeight(label=HOT_WATER_LABEL, unit=unit))
         positions.append(WaterPosition(hot, [component], hot_water))
     return positions
 
@@ -309,9 +346,12 @@ def _scaled_breakdown(
             f"'{title}': Der Gesamtverbrauch laut Rechnung ({_quantity(total)} m³) ist sogar kleiner als die Summe "
             f"der Kaltwasserzähler allein ({_quantity(measured)} m³) - bitte Rechnung und Zählerstände prüfen."
         )
+    billed_measured = (total * measured / metered).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
     return WaterBreakdown(
         period, amount, base, measured_amount, hot_amount, Money.zero(),
         total, measured, hot_water, Decimal(0),
+        billed_measured_quantity=billed_measured,
+        billed_hot_water_quantity=total - billed_measured,  # zusammen genau G
     )
 
 

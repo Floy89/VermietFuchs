@@ -121,6 +121,9 @@ class CostComponent:
         quantity_unit: Einheit der Menge.
         is_difference: ``True`` für die Differenz zwischen Gesamtverbrauch
             und Wohnungszählern.
+        quantity_label: Herkunft von ``quantity_total``, wenn sie von den Gewichten
+            abweicht (z. B. "lt. Rechnung" bei auf die Rechnung gekürzten Zählern).
+            Dann zeigt die Abrechnung Zählerwert und Menge nebeneinander.
     """
 
     amount: Money
@@ -128,6 +131,7 @@ class CostComponent:
     quantity_total: Decimal | None = None
     quantity_unit: str = ""
     is_difference: bool = False
+    quantity_label: str = ""
 
 
 #: Funktion, die eine Kostenposition in ihre Bestandteile zerlegt.
@@ -588,6 +592,7 @@ class CostAllocationService:
                         quantity_total=component.quantity_total,
                         quantity_unit=component.quantity_unit,
                         is_difference=component.is_difference,
+                        quantity_label=component.quantity_label,
                     )
                 )
 

@@ -7,6 +7,15 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
+## [1.2.2] - 2026-11-08
+
+### Geändert
+
+- **Wasserregel, Ausweis der Mengen:** Werden die Zähler auf die Wasserrechnung gekürzt, nennen
+  Abrechnungsseite und PDF neben dem Zählerwert auch die Menge laut Rechnung, z. B. „Zähler 100 m³
+  von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt. Rechnung“. Wohnungswasser und Warmwasser
+  ergeben zusammen den Gesamtverbrauch laut Versorger.
+
 ## [1.2.1] - 2026-11-08
 
 ### Geändert
@@ -128,6 +137,7 @@ Erste veröffentlichte Version.
 - Optionale Belegerkennung über ein lokal laufendes KI-Modell (Ollama).
 - Mehrere Benutzer mit eigener Datenbank, Änderungsprotokoll, helles und dunkles Design.
 
+[1.2.2]: https://github.com/Floy89/VermietFuchs/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Floy89/VermietFuchs/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Floy89/VermietFuchs/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Floy89/VermietFuchs/compare/v1.0.0...v1.1.0

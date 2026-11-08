@@ -504,7 +504,9 @@ Maßgeblich ist immer die Rechnung des Versorgers; die Zähler sind nur der Vert
 Messen Kalt- und Warmwasserzähler zusammen mehr als laut Rechnung verbraucht wurde (Messtoleranz,
 auf volle m³ abgelesene Zähler), werden beide im selben Verhältnis gekürzt: Der Mengenpreis geht
 im Verhältnis Wohnungswasser : Warmwasser auf die beiden Positionen, eine Restmenge entfällt. Ein
-Hinweis nennt die Mehrmenge und die Kürzung.
+Hinweis nennt die Mehrmenge und die Kürzung. Die Abrechnung zeigt dann Zählerwert und Menge laut
+Rechnung nebeneinander („Zähler 100 m³ von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt.
+Rechnung“); beide Positionen ergeben zusammen den Gesamtverbrauch laut Versorger.
 
 Zählerstände braucht es am Anfang und Ende des Zeitraums (höchstens 14 Tage daneben); fehlen
 Kaltwasserstände, bleibt es mit Hinweis bei der Verteilung je Split, fehlen Warmwasserstände,

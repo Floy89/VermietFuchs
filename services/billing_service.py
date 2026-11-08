@@ -400,7 +400,7 @@ class BillingService:
         if breakdown.hot_water_quantity <= 0 or not heating_with_cold_water:
             return False
         titles = ", ".join(dict.fromkeys(f"'{cost.title}'" for cost in heating_with_cold_water))
-        amount = f"{format_quantity(breakdown.hot_water_quantity)} m³, {format_money(breakdown.hot_water_amount)}"
+        amount = f"{format_quantity(breakdown.hot_water_billed)} m³, {format_money(breakdown.hot_water_amount)}"
         if not _covers([cost.period for cost in heating_with_cold_water], breakdown.period):
             result.warnings.append(
                 f"{titles} enthält laut Einstellung das Kaltwasser für die Warmwasserbereitung, deckt aber "

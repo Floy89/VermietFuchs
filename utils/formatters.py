@@ -118,7 +118,10 @@ def format_share_basis(share: CostShare) -> str:
     if share.quantity is not None and share.quantity_total is not None:
         unit = share.quantity_unit
         amount = f"{format_quantity(share.quantity)} {unit} von {format_quantity(share.quantity_total)} {unit}"
-        if share.is_difference:
+        if share.quantity_label:
+            # Zähler sind der Verteilungsschlüssel, die Menge stammt aus der Rechnung.
+            basis = f"Zähler {basis} · entspricht {amount} {share.quantity_label}"
+        elif share.is_difference:
             # Anteil an der Differenz zwischen Gesamtverbrauch und Wohnungszählern.
             basis += f" · entspricht {amount} Differenz"
         elif share.component_amount == share.cost.amount:

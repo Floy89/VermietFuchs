@@ -32,11 +32,13 @@ from services.water_allocation import (
     BASE_LABEL_AREA,
     BASE_LABEL_UNITS as BASE_LABEL,
     HOT_WATER_COST_TYPE,
+    HOT_WATER_LABEL,
     MEASURED_LABEL,
     REST_LABEL,
     base_fee,
     water_breakdown,
 )
+from utils.formatters import format_share_basis
 
 YEAR = DateRange.for_year(2025)
 WATER = CostType("Wasserversorgung", AllocationKey.CONSUMPTION, MeterType.COLD_WATER, id=2)
@@ -145,6 +147,10 @@ class TestBreakdown:
         # 583,47 € im Verhältnis 208 : 70,63 - jeder m³ laut Zähler kostet 583,47 / 278,63 = 2,0941 €.
         assert result.measured_amount == Money.from_decimal("435.57")
         assert result.hot_water_amount == Money.from_decimal("147.90")
+        # Ausgewiesen werden die Mengen laut Rechnung, zusammen genau 275 m³.
+        assert (result.billed_measured_quantity, result.billed_hot_water_quantity) == (
+            Decimal("205.290"), Decimal("69.710"))
+        assert result.is_scaled and result.hot_water_billed == Decimal("69.710")
         assert result.base_amount + result.measured_amount + result.hot_water_amount == result.amount
         assert any("anteilig auf 98,7 % gekürzt" in w for w in warnings)
         assert not any("kleiner als die Summe" in w for w in warnings)
@@ -269,6 +275,37 @@ class TestBilling:
             "DG": {BASE_LABEL: Money.from_decimal("54.57"), MEASURED_LABEL: Money.from_decimal("84.87"),
                    REST_LABEL: Money.from_decimal("34.07"), "Warmwasser": Money.from_decimal("63.93")},
         }
+
+    def test_meters_above_the_invoice_show_the_invoice_quantities(self, context: AppContext) -> None:
+        # DG korrigiert auf 191 m³: Zähler zusammen 278,63 m³, Gelsenwasser 275 m³.
+        house_id, _ = _house(context, cold={**COLD, "DG": ("91", "131", "191")})
+        result = context.billing.create_billing(house_id, YEAR)
+
+        water, hot = result.costs
+        assert water.amount + hot.amount == Money.from_decimal("747.18")
+        # Ausgewiesen wird die Menge laut Rechnung: 205,29 + 69,71 = 275 m³.
+        assert (water.consumption, hot.consumption) == (Decimal("205.290"), Decimal("69.710"))
+        assert water.consumption + hot.consumption == Decimal("275")
+
+        dg = next(s for s in result.statements if s.apartment.number == "DG")
+        lines = {share.component: format_share_basis(share) for share in dg.shares if share.cost.cost_type.meter_type}
+        assert lines[MEASURED_LABEL] == "Zähler 100 m³ von 208 m³ · entspricht 98,697 m³ von 205,29 m³ lt. Rechnung"
+        assert lines[HOT_WATER_LABEL] == "Zähler 30,13 m³ von 70,63 m³ · entspricht 29,738 m³ von 69,71 m³ lt. Rechnung"
+        assert REST_LABEL not in lines
+
+        billed = sum(
+            (share.quantity or Decimal(0) for s in result.statements for share in s.shares if share.quantity_label),
+            Decimal(0),
+        )
+        assert billed.quantize(Decimal("0.001")) == Decimal("275.000")
+
+    def test_without_scaling_the_basis_text_is_unchanged(self, context: AppContext) -> None:
+        house_id, _ = _house(context)
+        result = context.billing.create_billing(house_id, YEAR)
+        assert not any(share.quantity_label for s in result.statements for share in s.shares)
+        dg = next(s for s in result.statements if s.apartment.number == "DG")
+        measured = next(share for share in dg.shares if share.component == MEASURED_LABEL)
+        assert format_share_basis(measured) == "40 m³ von 148 m³"
 
     def test_invoice_total_is_fully_distributed(self, context: AppContext) -> None:
         house_id, _ = _house(context)
