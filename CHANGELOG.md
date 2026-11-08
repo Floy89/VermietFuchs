@@ -7,6 +7,15 @@ reine Fehlerbehebungen die letzte.
 Ein Update übernimmt alle Daten: Beim ersten Start einer neuen Version wird die Datenbank
 automatisch angepasst; vorher legt das Programm eine Sicherungskopie daneben an.
 
+## [1.3.0] - 2026-11-08
+
+### Neu
+
+- **Prüfung auf gleiche Zählerstände:** Ist für denselben Zähler derselbe Stand schon an einem
+  anderen Tag erfasst, fragt der Zählerstand-Dialog vor dem Speichern nach („Trotzdem speichern“) -
+  auch beim Duplizieren, wenn nur das Datum geändert wurde. Die Abrechnung nennt gespeicherte Fälle
+  als Hinweis (nicht bei Stand 0 und nicht bei Leerstand dazwischen).
+
 ## [1.2.2] - 2026-11-08
 
 ### Geändert
@@ -143,6 +152,7 @@ Erste veröffentlichte Version.
 - Optionale Belegerkennung über ein lokal laufendes KI-Modell (Ollama).
 - Mehrere Benutzer mit eigener Datenbank, Änderungsprotokoll, helles und dunkles Design.
 
+[1.3.0]: https://github.com/Floy89/VermietFuchs/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/Floy89/VermietFuchs/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/Floy89/VermietFuchs/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/Floy89/VermietFuchs/compare/v1.1.0...v1.2.0

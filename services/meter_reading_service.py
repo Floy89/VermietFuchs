@@ -7,7 +7,14 @@ from collections import defaultdict
 from decimal import Decimal
 
 from models.enums import MeterType, PhotoCategory
-from models.meter_reading import MeterReading, calculate_consumption, enclosing_pair, reading_pair
+from models.meter_reading import (
+    MeterReading,
+    calculate_consumption,
+    enclosing_pair,
+    reading_pair,
+    same_value_readings,
+    unchanged_pairs,
+)
 from models.photo import Photo
 from models.value_objects import DateRange
 from repositories.interfaces import (
@@ -83,6 +90,28 @@ class MeterReadingService:
                 photo.validate()
                 self._photos.add(photo)
         return saved
+
+    def same_value_readings(self, reading: MeterReading) -> list[MeterReading]:
+        """Gespeicherte Ablesungen desselben Zählers mit gleichem Stand an einem anderen Tag.
+
+        Für die Rückfrage vor dem Speichern: Ein unveränderter Stand ist oft ein
+        Duplikat, bei dem nur das Datum geändert wurde.
+        """
+        others = self._readings.list_filtered(None, reading.apartment_id, reading.meter_type)
+        return same_value_readings(reading, others)
+
+    def unchanged_reading_pairs(
+        self, property_id: int, period: DateRange
+    ) -> list[tuple[MeterReading, MeterReading]]:
+        """Aufeinanderfolgende Ablesungen mit gleichem Stand im Zeitraum, für alle Zähler der Immobilie."""
+        pairs: list[tuple[MeterReading, MeterReading]] = []
+        for meter_type in MeterType:
+            readings_by_apartment: dict[int, list[MeterReading]] = defaultdict(list)
+            for reading in self._readings.list_for_property_and_type(property_id, meter_type):
+                readings_by_apartment[reading.apartment_id].append(reading)
+            for readings in readings_by_apartment.values():
+                pairs.extend(unchanged_pairs(readings, period))
+        return pairs
 
     def delete_reading(self, reading_id: int) -> None:
         """Löscht einen Zählerstand samt seiner Fotos.

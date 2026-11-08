@@ -208,6 +208,11 @@ Dialog für einen **neuen** Eintrag mit den Werten des markierten - Datum bzw. R
 auf heute gesetzt. Angelegt wird erst mit *Speichern*; das Original bleibt unverändert, ein
 Foto wird nicht mitkopiert.
 
+**Gleicher Zählerstand an einem anderen Tag:** Ist für denselben Zähler derselbe Stand schon an
+einem anderen Tag erfasst, fragt der Dialog vor dem Speichern nach (*Trotzdem speichern*). Das
+fängt vor allem Duplikate ab, bei denen nur das Datum geändert wurde. Bereits gespeicherte Fälle
+nennt die Abrechnung als Hinweis, außer bei Stand 0 (Zähler noch nicht in Betrieb) und Leerstand.
+
 ### Rechnungen und aggregierte Rechnungen
 
 Jede Rechnung wird **einmal** mit ihrem echten Rechnungszeitraum erfasst, dazu optional

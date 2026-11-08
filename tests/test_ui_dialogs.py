@@ -107,7 +107,16 @@ class TestTabsAndDialogsOpen:
 
 
 class TestDuplicate:
-    def test_duplicate_reading_creates_new_entry(self, demo: AppContext, answer_dialog: Callable[[], None]) -> None:
+    def test_duplicate_reading_creates_new_entry(
+        self, demo: AppContext, answer_dialog: Callable[[], None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        questions: list[str] = []
+
+        def confirm_same_value(_parent: object, _title: str, text: str, confirm_label: str = "") -> bool:
+            questions.append(text)
+            return True  # "Trotzdem speichern"
+
+        monkeypatch.setattr("ui.dialogs.meter_reading_dialog.confirm", confirm_same_value)
         tab = MeterReadingTab(demo)
         tab.refresh()
         tab._readings_table.select_first()
@@ -118,6 +127,8 @@ class TestDuplicate:
         answer_dialog()
         tab._duplicate_reading()
 
+        # Das Duplikat hat denselben Stand an einem anderen Tag - das wird erst nachgefragt.
+        assert len(questions) == 1 and "Derselbe Zählerstand" in questions[0]
         after = demo.meter_readings.list_readings()
         assert len(after) == len(before) + 1
         # Das Original bleibt unverändert, die Kopie ist ein eigener Eintrag.

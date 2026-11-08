@@ -36,6 +36,48 @@ class MeterReading:
         self.note = optional_text(self.note, "Bemerkung", max_length=500)
 
 
+def same_value_readings(reading: MeterReading, others: Sequence[MeterReading]) -> list[MeterReading]:
+    """Andere Ablesungen desselben Zählers mit demselben Stand, aber an einem anderen Tag.
+
+    Ein unveränderter Stand heißt: kein Verbrauch dazwischen. Das kommt vor (Leerstand,
+    neuer Zähler), ist aber häufig ein Erfassungsfehler - etwa eine duplizierte
+    Ablesung, bei der nur das Datum geändert wurde. Die Ablesung selbst (gleiche ID)
+    zählt nicht mit.
+
+    Returns:
+        Die Treffer, nach Datum sortiert.
+    """
+    matches = [
+        other
+        for other in others
+        if other.apartment_id == reading.apartment_id
+        and other.meter_type is reading.meter_type
+        and (reading.id is None or other.id != reading.id)
+        and other.date != reading.date
+        and other.value == reading.value
+    ]
+    return sorted(matches, key=lambda other: other.date)
+
+
+def unchanged_pairs(readings: Sequence[MeterReading], period: DateRange) -> list[tuple[MeterReading, MeterReading]]:
+    """Aufeinanderfolgende Ablesungen eines Zählers mit gleichem Stand, die den Zeitraum berühren.
+
+    Args:
+        readings: Ablesungen *eines* Zählers (eine Wohnung, eine Zählerart).
+        period: Nur Paare, deren Zeitspanne in diesen Zeitraum hineinreicht.
+    """
+    ordered = sorted(readings, key=lambda reading: reading.date)
+    return [
+        (earlier, later)
+        for earlier, later in zip(ordered, ordered[1:])
+        if earlier.value == later.value
+        and earlier.date != later.date
+        # Die Zeitspanne dazwischen muss in den Zeitraum hineinreichen (31.12. / 01.03. gehört zum Folgejahr).
+        and later.date > period.start
+        and earlier.date < period.end
+    ]
+
+
 def calculate_consumption(readings: Sequence[MeterReading], period: DateRange) -> Decimal | None:
     """Ermittelt den Verbrauch eines Zählers innerhalb eines Zeitraums.
 

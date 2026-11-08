@@ -331,7 +331,13 @@ class TestBilling:
         assert len(placeholders) == 2
         assert any("EG vom 31.12.2024" in w for w in placeholders)
         assert any("DG vom 31.12.2024" in w for w in placeholders)
-        assert len(warnings) == 2
+        # Die Testdaten enthalten noch den alten Erfassungsfehler: DG am 31.05. und 31.12. je 131 m³.
+        unchanged = [w for w in warnings if w.startswith("Zählerstände")]
+        assert unchanged == [
+            "Zählerstände DG (Kaltwasser): Am 31.05.2025 und am 31.12.2025 ist derselbe Stand 131 m³ erfasst - "
+            "dazwischen kein Verbrauch. Bitte prüfen, ob ein Wert beim Duplizieren nicht angepasst wurde."
+        ]
+        assert len(warnings) == 3
 
     def test_missing_hot_water_readings(self, context: AppContext) -> None:
         hot = {name: rows for name, rows in HOT.items() if name != "DG"}

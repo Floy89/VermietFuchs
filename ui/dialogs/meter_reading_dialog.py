@@ -23,12 +23,28 @@ from services.photo_service import SUPPORTED_EXTENSIONS, read_image_file
 from services.receipt_scan_service import ReceiptScanService
 from ui.dialogs.base_dialog import FormDialog
 from ui.dialogs.receipt_scan_dialog import scan_meter_photo
-from ui.helpers import FileDropFilter, fill_combo, make_button, select_data
+from ui.helpers import FileDropFilter, confirm, fill_combo, make_button, select_data
 from ui.lookups import Lookups
 from ui.widgets.common import DateEdit, DecimalSpin
+from utils.formatters import format_date, format_quantity
 
 #: Funktion zum Speichern: (Zählerstand, Foto-Dateiname, Foto-Daten) -> Zählerstand
 SaveReading = Callable[[MeterReading, str | None, bytes | None], MeterReading]
+#: Funktion, die gespeicherte Ablesungen desselben Zählers mit gleichem Stand an anderen Tagen liefert.
+FindSameValue = Callable[[MeterReading], list[MeterReading]]
+
+
+def same_value_text(reading: MeterReading, matches: list[MeterReading], apartment_label: str) -> str:
+    """Text der Rückfrage, wenn derselbe Zählerstand schon an einem anderen Tag erfasst ist."""
+    days = ", ".join(format_date(match.date) for match in matches)
+    value = f"{format_quantity(reading.value)} {reading.meter_type.unit}"
+    return (
+        f"{apartment_label} – {reading.meter_type.label}: Derselbe Zählerstand {value} ist bereits "
+        f"am {days} erfasst.\n\n"
+        "Zwischen zwei Ablesungen mit gleichem Stand wurde nichts verbraucht. Häufig ist das ein "
+        "Duplikat, bei dem nur das Datum geändert wurde.\n\n"
+        "Bitte Zählerstand und Ablesedatum prüfen. Trotzdem speichern?"
+    )
 
 
 def image_file_filter() -> str:
@@ -59,10 +75,14 @@ class MeterReadingDialog(FormDialog):
         parent: QWidget | None = None,
         photo_path: Path | None = None,
         receipt_scan: ReceiptScanService | None = None,
+        find_same_value: FindSameValue | None = None,
     ) -> None:
         """
         Args:
             save: Funktion, die Zählerstand und optionales Foto speichert.
+            find_same_value: Optionale Prüfung vor dem Speichern. Liefert sie Ablesungen
+                mit gleichem Stand an anderen Tagen, fragt der Dialog nach, ob trotzdem
+                gespeichert werden soll.
             lookups: Stammdaten für die Wohnungsauswahl.
             reading: Zu bearbeitender Zählerstand; ``None`` legt einen neuen an.
                 Ein Zählerstand ohne ID dient als Vorlage für einen neuen (Duplikat).
@@ -74,6 +94,8 @@ class MeterReadingDialog(FormDialog):
         is_existing = reading is not None and reading.id is not None
         super().__init__("Zählerstand bearbeiten" if is_existing else "Neuer Zählerstand", parent)
         self._save = save
+        self._find_same_value = find_same_value
+        self._lookups = lookups
         self._reading = reading
         self._photo_path: Path | None = None
         self._receipt_scan = receipt_scan
@@ -195,6 +217,13 @@ class MeterReadingDialog(FormDialog):
             "note": self._note_edit.text(),
         }
         reading = replace(self._reading, **values) if self._reading else MeterReading(**values)
+
+        if self._find_same_value is not None:
+            matches = self._find_same_value(reading)
+            if matches:
+                text = same_value_text(reading, matches, self._lookups.apartment_label(reading.apartment_id))
+                if not confirm(self, "Gleicher Zählerstand", text, confirm_label="Trotzdem speichern"):
+                    raise ValidationError("Nicht gespeichert - bitte Zählerstand und Ablesedatum prüfen.")
 
         photo_name: str | None = None
         photo_data: bytes | None = None

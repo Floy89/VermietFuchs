@@ -105,6 +105,7 @@ class BillingService:
         invoices = self._billable_invoices(property_id, period)
         result.costs = self._cut_to_period(invoices, period)
         self._warn_about_split_gaps(invoices, period, result)
+        self._warn_about_unchanged_readings(property_id, apartments, tenants, period, result)
         water = self._apply_water_rules(property_id, apartments, result)
         # Reihenfolge wie im Katalog der Kostenarten (§ 2 BetrKV), innerhalb einer Kostenart nach Datum.
         result.costs.sort(key=lambda cost: (cost.cost_type.sort_order, cost.cost_type.name.casefold(), cost.period.start))
@@ -276,6 +277,36 @@ class BillingService:
         for override in self._overrides.list_by_period(period):
             if override.tenant_id == tenant_id and override.id is not None:
                 self._overrides.delete(override.id)
+
+    def _warn_about_unchanged_readings(
+        self,
+        property_id: int,
+        apartments: list[Apartment],
+        tenants: list[Tenant],
+        period: DateRange,
+        result: BillingResult,
+    ) -> None:
+        """Hinweis für jeden Zähler, der an zwei aufeinanderfolgenden Ablesungen denselben Stand zeigt.
+
+        Gleicher Stand heißt kein Verbrauch - oft eine duplizierte Ablesung, bei der nur das
+        Datum geändert wurde. Gerechnet wird trotzdem mit den erfassten Werten. Ohne Hinweis
+        bleibt, was den Stillstand erklärt: Stand 0 (Zähler noch nicht in Betrieb) und eine
+        Wohnung, die in der ganzen Zeit dazwischen leer stand.
+        """
+        numbers = {apartment.id: apartment.number for apartment in apartments}
+        for earlier, later in self._meter_readings.unchanged_reading_pairs(property_id, period):
+            if later.value == 0:
+                continue
+            between = DateRange(earlier.date, later.date)
+            if not any(t.apartment_id == later.apartment_id and t.occupied_days(between) > 0 for t in tenants):
+                continue  # Leerstand
+
+            value = f"{format_quantity(later.value)} {later.meter_type.unit}"
+            result.warnings.append(
+                f"Zählerstände {numbers.get(later.apartment_id, later.apartment_id)} ({later.meter_type.label}): "
+                f"Am {earlier.date:%d.%m.%Y} und am {later.date:%d.%m.%Y} ist derselbe Stand {value} erfasst - "
+                "dazwischen kein Verbrauch. Bitte prüfen, ob ein Wert beim Duplizieren nicht angepasst wurde."
+            )
 
     # ------------------------------------------------------------------ #
     # Wasserregel

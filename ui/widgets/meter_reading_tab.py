@@ -199,6 +199,7 @@ class MeterReadingTab(BaseTab):
             parent=self,
             photo_path=photo_path,
             receipt_scan=self._context.receipt_scan,
+            find_same_value=self._context.meter_readings.same_value_readings,
         )
         if dialog.exec():
             self._load_readings()
@@ -218,6 +219,7 @@ class MeterReadingTab(BaseTab):
             reading,
             parent=self,
             receipt_scan=self._context.receipt_scan,
+            find_same_value=self._context.meter_readings.same_value_readings,
         )
         dialog.duplicate_requested.connect(self._on_duplicate_reading_requested)
         if dialog.exec():
@@ -239,6 +241,7 @@ class MeterReadingTab(BaseTab):
             duplicated,
             parent=self,
             receipt_scan=self._context.receipt_scan,
+            find_same_value=self._context.meter_readings.same_value_readings,
         )
         if dialog.exec():
             self._load_readings()
